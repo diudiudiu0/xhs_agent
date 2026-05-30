@@ -24,9 +24,11 @@ playwright install chromium
 
 文本规划和正文扩写配置写在 `cfg/model_config.py` 的 `MODEL_CONFIG` 中。若要切换 DeepSeek、OpenAI 或其他 OpenAI-compatible 接口，修改 `api_key`、`base_url`、`planner_model` 和 `content_model`。
 
-图片生成/编辑配置写在 `cfg/model_config.py` 的 `IMAGE_MODEL_CONFIG` 中。当前推荐：
+图片生成/编辑配置写在 `cfg/model_config.py` 的 `IMAGE_MODEL_CONFIG` 中。当前支持：
 
-- 稳定优先：`gpt-image-1`，适合商品图、海报图、参考图编辑。
+- `provider="openai"`：使用 OpenAI Images API，例如 `gpt-image-1`。
+- `provider="doubao"`：使用火山方舟 Seedream 图片生成 API，例如 `doubao-seedream-5-0-260128`。
+- 稳定优先：OpenAI `gpt-image-1` 或火山方舟 Seedream 新版本，适合商品图、海报图、参考图编辑。
 - 成本优先：使用服务商提供的轻量/flash 图片模型，适合批量生成草图后人工筛选。
 - 国内或第三方兼容接口：优先选择明确支持 image generation / image edit 的模型，并修改 `base_url`、`api_key`、`image_model`。
 
@@ -81,6 +83,18 @@ python test/test_create_draft.py
 
 基于本地图片修改时，把 `image_generation_tasks.<任务名>.input_image` 填成本地图片路径，例如 `doc/pic_exam.png`。
 
+如果参考图来自本机，设置 `input_image_source: local`；如果参考图来自网络图片地址，设置 `input_image_source: url`。
+
+图片尺寸和比例在 `cfg/task.yaml` 的图片任务里设置：
+
+```yaml
+size: 2K
+aspect_ratio: 1:1
+watermark: false
+```
+
+常用比例可以写 `1:1`、`3:4`、`4:3`、`9:16`、`16:9`。豆包 Seedream 也支持你示例里的 `size: 2K`。如果某个模型不支持独立的 `aspect_ratio` 参数，可以把比例要求直接写进 `prompt`，例如“竖版 3:4 小红书封面”。
+
 运行测试：
 
 ```bash
@@ -119,7 +133,11 @@ python test/test_image_generation.py
 
 ### 图片生成 API Key 为空
 
-请在 `cfg/model_config.py` 的 `IMAGE_MODEL_CONFIG["api_key"]` 中填写图片生成服务的 API Key，或设置环境变量 `OPENAI_API_KEY`。
+请在 `cfg/model_config.py` 的 `IMAGE_MODEL_CONFIG["api_key"]` 中填写图片生成服务的 API Key。
+
+如果 `provider="openai"`，也可以设置环境变量 `OPENAI_API_KEY`。
+
+如果 `provider="doubao"`，也可以设置环境变量 `ARK_API_KEY` 或 `VOLCENGINE_API_KEY`。
 
 ### 登录状态失效
 

@@ -6,23 +6,15 @@
 - 小红书发帖任务：note_tasks
 - 图片生成/编辑任务：image_generation_tasks
 
-常见文本模型示例（具体名称以服务商控制台为准）：
-- DeepSeek: deepseek-v4-pro, deepseek-v4-flash
-- OpenAI: gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini
-- 通义千问 OpenAI 兼容接口: qwen-plus, qwen-max, qwen-turbo
-- Moonshot/Kimi OpenAI 兼容接口: moonshot-v1-8k, moonshot-v1-32k, moonshot-v1-128k
-- 智谱 OpenAI 兼容接口: glm-4-plus, glm-4-air
-
-常见图片模型建议：
-- 稳定优先：OpenAI gpt-image-1，适合商品图、封面图、参考图编辑。
-- 成本优先：使用服务商提供的轻量/flash 图片模型，适合批量出草图后人工筛选。
-- 第三方 OpenAI-compatible 图片接口：通常只需要改 api_key、base_url、image_model。
+图片生成 provider 可选：
+- openai：使用 OpenAI Images API。
+- doubao：使用火山方舟 Seedream 图片生成 API。
 """
 
 
 MODEL_CONFIG = {
     "provider": "deepseek",
-    "api_key": "your api key here",  # 为空时会尝试读取环境变量 DEEPSEEK_API_KEY。                  
+    "api_key": "your api key here",  # 为空时可自行改造为读取 DEEPSEEK_API_KEY。
     "base_url": "https://api.deepseek.com",
     "planner_model": "deepseek-v4-flash",
     "content_model": "deepseek-v4-flash",
@@ -35,12 +27,31 @@ MODEL_CONFIG = {
 
 
 IMAGE_MODEL_CONFIG = {
-    "provider": "openai",
-    "api_key": "",  # 为空时会尝试读取环境变量 OPENAI_API_KEY。
-    "base_url": "https://api.openai.com/v1",
-    "image_model": "gpt-image-1",
-    "size": "1024x1024",
+    # "openai" 或 "doubao"
+    "provider": "doubao",
+
+    # OpenAI:
+    # - api_key 为空时读取 OPENAI_API_KEY。
+    # - base_url 通常为 https://api.openai.com/v1。
+    #
+    # Doubao/火山方舟:
+    # - api_key 为空时优先读取 ARK_API_KEY，其次读取 VOLCENGINE_API_KEY。
+    # - base_url 通常为 https://ark.cn-beijing.volces.com/api/v3。
+    "api_key": "your api key here",
+    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+
+    # OpenAI 示例：gpt-image-1
+    # Doubao 示例：doubao-seedream-5-0-260128
+    "image_model": "doubao-seedream-5-0-260128",
+
+    # 默认尺寸。具体任务可在 cfg/task.yaml 的 image_generation_tasks 中覆盖。
+    # OpenAI 常用：1024x1024、1024x1536、1536x1024。
+    # 豆包 Seedream 可用：2K 等，具体以火山方舟模型文档为准。
+    "size": "2K",
     "quality": "medium",
     "output_format": "png",
     "timeout": 120,
+
+    # Doubao 专用可选参数。
+    "response_format": "b64_json",
 }
