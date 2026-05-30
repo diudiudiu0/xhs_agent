@@ -1,0 +1,116 @@
+# xhs_agent task config
+#
+# 这里放“任务参数”，不要放 API Key、base_url、模型名等模型服务参数。
+# 模型服务参数统一放在 cfg/model_config.py。
+#
+# 当前分为两类任务：
+# - note_tasks：小红书图文/视频草稿创建任务。
+# - image_generation_tasks：本地图片生成/编辑任务。
+
+active_note_task: xhs_note_draft
+active_image_generation_task: image_asset_generation
+
+note_tasks:
+  xhs_note_draft:
+    # 必填项：不填会在打开浏览器前停止。
+    required_fields:
+      - input.post_type
+      - input.topic
+      - input.title
+      - input.seed_content
+
+    input:
+      # image = 图文笔记；video = 视频笔记。
+      post_type: image
+      topic: 脚轮推荐
+      title: 脚轮怎么选？仓储货架和工具车都能用的实用推荐
+      seed_content: 围绕脚轮推荐扩写正文，适合小红书商品推荐账号，重点讲承重、材质、静音、刹车和使用场景。
+      target_chars: 1000
+      expand_content: true
+
+      # 图文素材：post_type=image 时优先从 image_folder 随机选图。
+      image_folder: C:\Users\27952\Pictures\Screenshots
+      default_image_file: doc/pic_exam.png
+      num_images: 2
+
+      # 视频素材：post_type=video 时优先从 video_folder 随机选视频。
+      video_folder: ""
+      default_video_file: doc/vid_exam.mp4
+      num_videos: 1
+
+    task_description_template: |
+      你正在小红书创作中心，需要完成一篇{post_type_name}草稿：
+      - 发布类型：{post_type_name}
+      - 标题：{title}
+      - 正文：{content}
+      - 素材上传由系统工具处理，你无需处理系统文件弹窗。
+      请自行判断页面状态，完成素材上传、标题填写、正文填写，最后点击“暂存离开”保存到草稿箱。
+      “暂存离开”和“保存到草稿箱”是同一个完成语义，成功后返回 done。
+
+    first_step_instruction: |
+      【第一步】分析页面，根据发布类型进入正确入口：图文笔记选择“上传图文/发布图文笔记”，视频笔记选择“上传视频”。
+
+    planner_intro: |
+      你是小红书创作中心自动化 Agent，目标是创建草稿，不是正式发布。
+      你需要像真实运营助手一样判断自己处于哪个阶段：创作中心首页、发布菜单、素材上传区、编辑页、标题填写、正文填写、完成。
+
+    response_schema: |
+      {"action": "click"|"fill"|"upload_media"|"save_and_leave"|"back"|"wait"|"done", "element_index": 数字或 null, "value": "仅 fill 需要", "reason": "为什么这样做", "expected_result": "你预期页面接下来发生什么"}
+
+    planner_rules:
+      - click/fill 必须指定 element_index。
+      - 素材上传请优先返回 upload_media；系统文件弹窗由工具函数处理，你不需要也看不到弹窗。
+      - post_type=image 时必须进入图文发布流程，选择“上传图文/发布图文笔记/上传图片”，不要进入视频上传页。
+      - post_type=video 时必须进入视频发布流程，选择“上传视频”，不要进入图文上传页。
+      - 小红书不允许纯文字发布；没有完成素材上传前，不要填写完成后直接保存。
+      - 若输入框当前值已为目标内容，勿重复填写。
+      - 如果最近已经连续点击同一个元素但页面没有变化，绝对不要继续点它；应改点更具体的入口，或等待，或选择编辑区。
+      - “发布笔记”通常只是打开菜单；看到具体入口后，必须根据 post_type 选择图文或视频流程。
+      - 目标是保存草稿或停留在已填写的编辑页，不要点击最终“发布/提交/确认发布”。
+      - “暂存离开”“保存草稿”“进入草稿箱/保持到草稿箱”在本任务里是同一个意思：草稿已经保存，任务完成。
+      - 标题、正文和素材都完成后，优先返回 save_and_leave；一旦暂存离开成功，必须 done，不要重新打开发布入口。
+      - 正文区域通常为 [contenteditable] 类型，描述可能含“空白正文编辑区”。
+      - 忽略“话题”、“表情”等无关按钮。
+      - 第一步绝对不可返回 done。
+
+    content_generation:
+      style:
+        account_role: 小红书商品推荐账号的运营写手
+        target_user: 正在选购或改造货架、工具车、展示架、家具推车的用户
+        tone: 真实、实用、像朋友分享经验，不夸张硬广
+        structure: 先提出痛点，再讲选购维度，然后给场景推荐，结尾引导收藏和评论
+        extra_requirements: 自然包含话题标签；不要夸大功效；不要写医疗、绝对化承诺；只输出正文，不要输出标题，不要 Markdown
+
+      prompt_template: |
+        你是一个{account_role}，请围绕“{topic}”扩写一篇正文。
+
+        标题：{title}
+        原始要点：{seed_content}
+        发布类型：{post_type_name}
+        目标读者：{target_user}
+        正文语气：{tone}
+        正文结构：{structure}
+        额外要求：{extra_requirements}
+
+        写作要求：
+        - 目标长度约 {target_chars} 个中文字符，允许在 900 到 1100 个中文字符之间。
+        - 围绕主题给出实用选购/使用建议，结构清晰，适合收藏。
+        - 内容要适合小红书商品推荐账号，不要写成说明书或论文。
+        - 只输出正文，不要输出标题，不要 Markdown。
+
+      fallback_content: |
+        最近很多朋友问我，货架、工具车、展示架或者家里小推车想改得更顺滑，脚轮到底应该怎么选。其实脚轮不是随便买四个装上就行，选错了会出现推不动、噪音大、地板被刮、刹不住、用一段时间就松动这些问题。如果你是做仓储、门店陈列、工作室工具车，第一步先看承重。建议不要只看单个轮子的极限承重，而是把整车重量、货物重量和移动冲击都算进去，留出余量会更稳。第二步看材质。经常在水泥地、仓库地面走，可以考虑耐磨一点的 PU 轮；想要静音、保护木地板或瓷砖，可以优先看 TPR、橡胶类软轮；如果承重特别高，尼龙轮更硬朗，但噪音和地面保护要一起考虑。第三步看是否带刹车。展示架、工作台、置物架这类需要固定位置的场景，建议至少两个轮子带刹，最好选双刹结构，同时锁住轮子转动和支架旋转，停放更安心。第四步看安装方式。常见有平板、丝杆、孔顶几种，购买前一定量好孔距、丝杆直径和高度，别只看图片下单。家具改造尤其要注意安装面是否够厚、螺丝是否能吃力。如果你想要一套比较通用的搭配，我会建议中小型置物架选静音 PU 或 TPR 万向轮，两只带刹；工具车和仓储推车选承重更高的 PU 万向轮，前后搭配定向轮会更好控方向；展示架则优先考虑静音、外观和刹车稳定性。脚轮看起来是小配件，但它决定了设备好不好推、稳不稳、耐不耐用。选之前把使用场景、地面材质、总重量、是否需要固定这四点想清楚，基本就不会踩坑。#脚轮推荐 #万向轮 #工具车改造 #货架配件 #家具改造 #仓储好物 #小红书好物推荐 如果你不确定自己的场景该选哪种脚轮，可以把用途、重量和地面情况发出来，我帮你一起看。
+
+image_generation_tasks:
+  image_asset_generation:
+    # 必填项：prompt 为空会直接停止。
+    required_fields:
+      - prompt
+      - output_dir
+
+    # 纯文生图：input_image 留空。
+    # 图生图/改图：input_image 填本地图片路径，例如 doc/pic_exam.png。
+    prompt: 生成一张小红书风格的脚轮商品推荐封面图，干净明亮背景，突出承重、静音、刹车三个卖点，适合商品种草账号使用
+    input_image: ""
+    output_dir: doc/generated_images
+    count: 1
