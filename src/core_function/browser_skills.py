@@ -264,6 +264,27 @@ def _pick_media_files(folder_path, default_file, count, exts, label):
     return []
 
 
+def _pick_explicit_media_files(file_paths, count, exts, label):
+    if not file_paths:
+        return []
+
+    selected = []
+    for value in file_paths:
+        path = Path(value).expanduser()
+        if not path.exists() or not path.is_file():
+            print(f"指定{label}素材不存在，已跳过：{path}")
+            continue
+        if path.suffix.lower() not in exts:
+            print(f"指定{label}素材格式不支持，已跳过：{path}")
+            continue
+        selected.append(str(path.resolve()))
+
+    if not selected:
+        print(f"指定{label}素材列表中没有可用文件")
+        return []
+    return selected[:count]
+
+
 async def _click_exact_text(page, text, timeout=3000):
     locator = page.get_by_text(text, exact=True)
     count = await locator.count()
@@ -983,6 +1004,8 @@ async def upload_media_directly(
     post_type,
     image_folder=None,
     video_folder=None,
+    image_files=None,
+    video_files=None,
     default_image_file=None,
     default_video_file=None,
     num_images=3,
@@ -990,6 +1013,20 @@ async def upload_media_directly(
 ):
     """根据发布类型上传图片或视频素材。"""
     if post_type == "video":
+        selected_video_files = _pick_explicit_media_files(
+            video_files,
+            num_videos,
+            {'.mp4', '.mov', '.avi', '.mkv', '.webm'},
+            "视频",
+        )
+        if selected_video_files:
+            folder_for_video = str(Path(selected_video_files[0]).parent)
+            return await upload_video_directly(
+                page,
+                folder_for_video,
+                default_file=selected_video_files[0],
+                num_videos=1,
+            )
         return await upload_video_directly(
             page,
             video_folder,
@@ -997,13 +1034,16 @@ async def upload_media_directly(
             num_videos=num_videos,
         )
 
-    selected_paths = _pick_media_files(
-        image_folder,
-        default_image_file,
-        num_images,
-        {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'},
-        "图片",
-    )
+    image_exts = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'}
+    selected_paths = _pick_explicit_media_files(image_files, num_images, image_exts, "图片")
+    if not selected_paths:
+        selected_paths = _pick_media_files(
+            image_folder,
+            default_image_file,
+            num_images,
+            image_exts,
+            "图片",
+        )
     if not selected_paths:
         return False
 

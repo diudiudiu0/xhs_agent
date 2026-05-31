@@ -1,0 +1,153 @@
+# xhs_agent image task config
+#
+# 这里统一管理“图片生成/图片提示词生成/批量出图”的任务参数和提示词模板。
+# 模型服务参数仍然放在 cfg/model_config.py。
+
+active_image_generation_task: image_asset_generation
+active_image_prompt_task: caster_product_prompt
+active_image_prompt_pipeline_task: caster_product_pipeline
+
+image_generation_tasks:
+  image_asset_generation:
+    # 必填项：prompt 为空会直接停止。
+    # 组合流程 test/test_image_prompt_generation.py 会用视觉模型生成的 prompt 覆盖这里的 prompt。
+    required_fields:
+      - prompt
+      - output_dir
+
+    # 纯文生图：input_image 留空。
+    # 图生图/改图：input_image 填参考图。
+    # input_image_source:
+    # - local：input_image 为本机路径。相对路径基于项目根目录，例如 doc/pic_exam.png。
+    # - url：input_image 为网络图片 URL，例如 https://example.com/demo.png。
+    prompt: 根据我提供的图片，生成一张专业的商业海报。背景设置为该我提供的图片中的主体的使用场景，背景虚化且与主体过渡协调，突出主体的细节和质感，风格为电商产品海报，干净明亮，有主体的使用场景，但不能喧宾夺主。
+    input_image_source: local
+    input_image: "doc/pic_exam.png"
+    output_dir: doc/generated_images
+
+    # 生成数量：
+    # - test/test_image_generation.py：同一条 prompt 生成 count 张候选图。
+    # - test/test_image_prompt_generation.py：先生成 count 条不同用途的 prompt，再逐条出图。
+    count: 3
+
+    # 图片尺寸/比例：
+    # - 豆包 Seedream 可使用 size: 2K。
+    # - aspect_ratio 常用：1:1、3:4、4:3、9:16、16:9。
+    size: 2K
+    aspect_ratio: 4:3
+    watermark: false
+
+image_prompt_tasks:
+  caster_product_prompt:
+    # 看图生成提示词任务：必须提供 input_image。
+    required_fields:
+      - input_image
+      - instruction
+      - user_goal
+
+    input_image_source: local
+    input_image: "doc/pic_exam.png"
+
+    # 这里描述视觉模型如何读取参考图并产生图片生成提示词。
+    instruction: |
+      请先识别参考图中的主体、材质、颜色、品牌文字、结构细节和适合保留的视觉特征。
+      然后结合用户的目标要求，写一组适合图片生成模型使用的中文提示词。
+      每条提示词需要具体描述主体、构图、背景、光影、质感、商业海报风格、比例和需要避免的问题。
+      注意采用单主体原则，比如图片中有四个脚轮，但生成图主体只需要一个脚轮。
+      要突出脚轮细节和质感，背景可以有使用场景但要虚化且不喧宾夺主。
+     
+
+    user_goal: |
+      根据我提供的图片，生成专业的 ZEABO M6 黑色刹车轮商业海报图组。
+      画面需要以参考图中的脚轮为视觉主体，突出 M6 金属螺纹丝杆、刹车拨片、黑色轮体质感和品牌识别。
+      M6的金属螺丝杆不要弯曲，要突出它的刚性和细节。
+      整体布局要能服务小红书商品推荐内容，配色不突兀。
+      风格为电商产品海报，干净明亮，有办公室或办公椅使用场景，但不能喧宾夺主。
+
+    # 批量出图策划：count > 1 时使用。
+    batch_prompt_plan: |
+      如果目标图片数量为 1，只生成一张主视觉商业海报。
+      如果目标图片数量为 2，第1张作为小红书封面，强调点击吸引力、统一色调和标题留白；第2张作为产品主体介绍图，突出脚轮结构、材质、螺纹丝杆、刹车拨片和品牌识别，以及包括参数等信息。
+      如果目标图片数量为 3，第1张作为文章封面，色调干净明亮、有强记忆点和标题留白；第2张作为主体轮子介绍图，突出单个脚轮的细节、金属丝杆、黑色轮体和刹车结构，以及包括参数等信息。；第3张作为使用场景图，突出办公椅、货架或工具车等真实应用场景，背景虚化但能说明用途。
+      如果目标图片数量超过 3，继续扩展为安装方式、承重/静音卖点对比、材质细节特写、场景组合图等。
+      此外每张图都需要注意标明品牌，且参数图如果要进行材质标明的话一定注意不要标错了，刚性材料如果插杆和螺纹丝杆要注意不要生成图片使其弯曲。背景一般情况下均不要使用纯白背景，且背景需要与主体过渡协调，整体布局简洁明了。
+    # 视觉模型提示词模板：负责看图和创意描述，不要求它必须稳定返回 JSON。
+    vision_prompt_template: |
+      {instruction}
+
+      用户目标：
+      {user_goal}
+
+      目标图片数量：{prompt_count}
+      目标尺寸/清晰度：{size}
+      目标画面比例：{aspect_ratio}
+
+      批量策划：
+      {batch_prompt_plan}
+
+      输出要求：
+      {vision_output_requirements}
+
+    vision_output_requirements:
+      single: |
+        请输出一段完整、可直接用于图片生成模型的中文提示词。
+        不要输出解释，不要输出 Markdown。
+      batch: |
+        请一次性输出 {prompt_count} 条不同用途的中文图片生成提示词。
+        每条提示词都要能独立用于图片生成模型，且要彼此分工明确、构图不同、信息重点不同。
+        推荐输出 JSON 字符串数组；如果无法保证 JSON，也可以用“第1张、第2张、第3张”分段，但不要输出无关解释。
+
+    retry_instruction_template:
+      single: |
+        请重新输出结果。不要解释，不要分点，不要 Markdown。
+        只返回一段完整中文图片生成提示词。
+      batch: |
+        请重新输出结果。不要解释，不要 Markdown。
+        只返回 {prompt_count} 条中文图片生成提示词，可以是 JSON 数组，也可以用“第1张、第2张”清晰分段。
+
+    # 本地兜底解析关键词：
+    # 正常流程会优先使用 DeepSeek formatter，这里只用于 formatter 失败后的兜底拆分。
+    parse_heading_keywords:
+      - 封面图
+      - 产品主体图
+      - 产品主体介绍图
+      - 主体图
+      - 主体轮子介绍图
+      - 使用场景图
+      - 场景图
+      - 细节图
+
+    # 格式化模型提示词模板：负责把视觉模型自由文本整理成严格 JSON。
+    formatter:
+      prompt_template: |
+        你是一个稳定的图片生成提示词结构化整理器。
+
+        任务：
+        把“视觉模型原始返回”整理为严格 JSON 数组，数组长度必须是 {expected_count}。
+        数组里的每一项都是一条完整中文图片生成 prompt 字符串，可以直接交给图片生成模型使用。
+
+        整理要求：
+        - 只输出 JSON 数组，不要 Markdown，不要解释，不要编号。
+        - 如果原始返回已经是 JSON 但不完整、缺少结尾括号、混入解释，请修复为合法 JSON 数组。
+        - 如果原始返回只有自然语言分段，请按语义拆成 {expected_count} 条。
+        - 如果原始返回条数不足，请结合用户目标和批量策划补齐，但不要偏离参考图主体。
+        - 每条 prompt 必须分工不同，不能只是换同义词。
+        - 每条 prompt 保留画面比例、清晰度、主体、材质、构图、光影、背景、需要避免的问题。
+
+        用户目标：
+        {user_goal}
+
+        目标尺寸/清晰度：{size}
+        目标画面比例：{aspect_ratio}
+
+        批量策划：
+        {batch_prompt_plan}
+
+        视觉模型原始返回：
+        {raw_text}
+
+image_prompt_pipeline_tasks:
+  caster_product_pipeline:
+    # 组合任务：先执行 image_prompt_tasks 生成 prompt，再交给 image_generation_tasks 出图。
+    prompt_task: caster_product_prompt
+    generation_task: image_asset_generation

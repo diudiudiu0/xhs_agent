@@ -4,6 +4,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TASK_CONFIG_PATH = PROJECT_ROOT / "cfg" / "task.yaml"
+IMAGE_TASK_CONFIG_PATH = PROJECT_ROOT / "cfg" / "image_task.yaml"
 
 
 def _strip_inline_comment(line: str) -> str:
@@ -158,8 +159,8 @@ def _fallback_safe_load(text: str) -> dict:
     return parsed
 
 
-def load_task_config() -> dict:
-    text = TASK_CONFIG_PATH.read_text(encoding="utf-8")
+def _safe_load_yaml_file(path: Path) -> dict:
+    text = path.read_text(encoding="utf-8")
     try:
         import yaml
 
@@ -167,7 +168,24 @@ def load_task_config() -> dict:
     except ModuleNotFoundError:
         data = _fallback_safe_load(text)
     if not isinstance(data, dict):
-        raise ValueError("cfg/task.yaml 解析结果不是字典，请检查 YAML 格式")
+        raise ValueError(f"{path} 解析结果不是字典，请检查 YAML 格式")
+    return data
+
+
+def _deep_merge(base: dict, extra: dict) -> dict:
+    merged = dict(base)
+    for key, value in extra.items():
+        if isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_task_config() -> dict:
+    data = _safe_load_yaml_file(TASK_CONFIG_PATH)
+    if IMAGE_TASK_CONFIG_PATH.exists():
+        data = _deep_merge(data, _safe_load_yaml_file(IMAGE_TASK_CONFIG_PATH))
     return data
 
 
@@ -185,5 +203,38 @@ def get_active_image_generation_task_config() -> dict:
     active_task = config.get("active_image_generation_task", "image_asset_generation")
     tasks = config.get("image_generation_tasks", {})
     if active_task not in tasks:
-        raise KeyError(f"task.yaml 中不存在 active_image_generation_task：{active_task}")
+        raise KeyError(f"cfg/image_task.yaml 中不存在 active_image_generation_task：{active_task}")
     return tasks[active_task]
+
+
+def get_active_image_prompt_task_config() -> dict:
+    config = load_task_config()
+    active_task = config.get("active_image_prompt_task", "caster_product_prompt")
+    tasks = config.get("image_prompt_tasks", {})
+    if active_task not in tasks:
+        raise KeyError(f"cfg/image_task.yaml 中不存在 active_image_prompt_task：{active_task}")
+    return tasks[active_task]
+
+
+def get_active_image_prompt_pipeline_config() -> dict:
+    config = load_task_config()
+    active_task = config.get("active_image_prompt_pipeline_task", "caster_product_pipeline")
+    tasks = config.get("image_prompt_pipeline_tasks", {})
+    if active_task not in tasks:
+        raise KeyError(f"cfg/image_task.yaml 中不存在 active_image_prompt_pipeline_task：{active_task}")
+    pipeline_config = tasks[active_task]
+
+    prompt_task_name = pipeline_config.get("prompt_task")
+    generation_task_name = pipeline_config.get("generation_task")
+    prompt_tasks = config.get("image_prompt_tasks", {})
+    generation_tasks = config.get("image_generation_tasks", {})
+    if prompt_task_name not in prompt_tasks:
+        raise KeyError(f"cfg/image_task.yaml 中不存在 image_prompt_tasks.{prompt_task_name}")
+    if generation_task_name not in generation_tasks:
+        raise KeyError(f"cfg/image_task.yaml 中不存在 image_generation_tasks.{generation_task_name}")
+
+    return {
+        "pipeline": pipeline_config,
+        "prompt_task": prompt_tasks[prompt_task_name],
+        "generation_task": generation_tasks[generation_task_name],
+    }

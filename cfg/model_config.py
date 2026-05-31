@@ -4,7 +4,7 @@
 本文件只放“模型服务参数”，例如 API Key、base_url、模型名、超时、温度、图片尺寸等。
 具体任务参数放在 cfg/task.yaml：
 - 小红书发帖任务：note_tasks
-- 图片生成/编辑任务：image_generation_tasks
+图片生成/编辑/看图写 prompt 任务放在 cfg/image_task.yaml。
 
 图片生成 provider 可选：
 - openai：使用 OpenAI Images API。
@@ -14,7 +14,7 @@
 
 MODEL_CONFIG = {
     "provider": "deepseek",
-    "api_key": "your api key here",  # 为空时可自行改造为读取 DEEPSEEK_API_KEY。
+    "api_key": "your_api_key",  # 为空时可自行改造为读取 DEEPSEEK_API_KEY。
     "base_url": "https://api.deepseek.com",
     "planner_model": "deepseek-v4-flash",
     "content_model": "deepseek-v4-flash",
@@ -23,6 +23,12 @@ MODEL_CONFIG = {
     "content_max_tokens": 1800,
     "planner_temperature": 0.1,
     "content_temperature": 0.7,
+
+    # 用于把视觉模型的自由文本结果整理成严格 JSON。
+    # 这里建议低温度，保证批量图片 prompt 的结构稳定。
+    "formatter_model": "deepseek-v4-flash",
+    "formatter_max_tokens": 3200,
+    "formatter_temperature": 0.1,
 }
 
 
@@ -37,7 +43,7 @@ IMAGE_MODEL_CONFIG = {
     # Doubao/火山方舟:
     # - api_key 为空时优先读取 ARK_API_KEY，其次读取 VOLCENGINE_API_KEY。
     # - base_url 通常为 https://ark.cn-beijing.volces.com/api/v3。
-    "api_key": "your api key here",
+    "api_key": "your_api_key",
     "base_url": "https://ark.cn-beijing.volces.com/api/v3",
 
     # OpenAI 示例：gpt-image-1
@@ -54,4 +60,25 @@ IMAGE_MODEL_CONFIG = {
 
     # Doubao 专用可选参数。
     "response_format": "b64_json",
+}
+
+
+VISION_PROMPT_MODEL_CONFIG = {
+    # 用于“看图写图片生成提示词”的多模态大模型。
+    # Moonshot/Kimi 示例：
+    # - api_key 为空时读取环境变量 MOONSHOT_API_KEY。
+    # - base_url: https://api.moonshot.cn/v1
+    # - model: kimi-k2.6
+    "provider": "moonshot",
+    "api_key": "your_api_key",
+    "env_key": "MOONSHOT_API_KEY",
+    "base_url": "https://api.moonshot.cn/v1",
+    "model": "kimi-k2.6",
+    # 批量看图写 prompt 会比普通文本慢，建议 180-300。
+    "timeout": 180,
+    "retry_attempts": 2,
+    # kimi-k2.6 当前只允许 temperature=1。
+    "temperature": 1,
+    "max_tokens": 3000,
+    "system_prompt": "你是一名专业的电商视觉提示词工程师，擅长根据参考图写出可用于图片生成模型的高质量中文提示词。",
 }

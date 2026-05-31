@@ -34,7 +34,7 @@ playwright install chromium
 
 ## 任务配置
 
-任务参数写在 `cfg/task.yaml` 中。之后要切换运营任务，可以新增一个任务配置，并把 `active_note_task` 或 `active_image_generation_task` 改成对应任务名。
+发帖任务参数写在 `cfg/task.yaml` 中。图片生成、看图写 prompt、批量出图参数写在 `cfg/image_task.yaml` 中。之后要切换任务，可以新增一个任务配置，并把对应的 `active_*_task` 改成任务名。
 
 必填项：
 
@@ -74,7 +74,7 @@ python test/test_create_draft.py
 
 ## 生成本地图片素材
 
-图片生成任务参数统一写在 `cfg/task.yaml` 的 `image_generation_tasks` 中；模型服务参数仍然写在 `cfg/model_config.py` 的 `IMAGE_MODEL_CONFIG` 中。
+图片生成任务参数统一写在 `cfg/image_task.yaml` 的 `image_generation_tasks` 中；模型服务参数仍然写在 `cfg/model_config.py` 的 `IMAGE_MODEL_CONFIG` 中。
 
 - `IMAGE_MODEL_CONFIG`：图片模型、API Key、base_url、默认尺寸、默认质量。
 - `image_generation_tasks`：本次测试的 prompt、参考图路径、输出目录、生成数量。
@@ -85,7 +85,7 @@ python test/test_create_draft.py
 
 如果参考图来自本机，设置 `input_image_source: local`；如果参考图来自网络图片地址，设置 `input_image_source: url`。
 
-图片尺寸和比例在 `cfg/task.yaml` 的图片任务里设置：
+图片尺寸和比例在 `cfg/image_task.yaml` 的图片任务里设置：
 
 ```yaml
 size: 2K
@@ -103,6 +103,32 @@ python test/test_image_generation.py
 
 输出文件会自动按 `1.png`、`2.png`、`3.png` 顺序保存到指定目录。生成好的目录可以直接填入 `cfg/task.yaml` 的 `note_tasks.<任务名>.input.image_folder`，用于后续图文笔记发布。
 
+如果希望把图片生成和创建小红书图文草稿串起来，运行：
+
+```bash
+python test/test_generate_images_and_create_draft.py
+```
+
+这个流程会先执行 `cfg/image_task.yaml` 中的图片生成流水线，再把本次生成出的图片路径按数字文件名顺序传给发帖 Agent，随后进入创作中心上传图片、填写标题、扩写/填写正文并暂存离开。这里不会从输出目录随机抽图。
+
+## 看图生成图片提示词
+
+如果想先让视觉大模型读取现有图片，再自动写出图片生成提示词，然后把这个提示词交给图片生成模型出图，运行：
+
+```bash
+python test/test_image_prompt_generation.py
+```
+
+这个流程由三个配置区域组合完成：
+
+- `image_prompt_tasks`：看图生成图片提示词，要求 `input_image` 非空。
+- `image_generation_tasks`：拿最终 prompt 出图，负责尺寸、比例、输出目录等。
+- `image_prompt_pipeline_tasks`：声明使用哪一个 prompt 任务和哪一个出图任务。
+
+`input_image_source: local` 时读取本机图片，`input_image_source: url` 时读取网络图片地址。视觉模型配置在 `cfg/model_config.py` 的 `VISION_PROMPT_MODEL_CONFIG` 中，默认按 Moonshot/Kimi 的 OpenAI-compatible 接口配置。
+
+如果希望智能式批量生成图片，把 `image_generation_tasks.<任务名>.count` 改成目标数量，例如 `3`。在 `test/test_image_prompt_generation.py` 这条组合流程里，程序不会简单地用同一个 prompt 生成 3 张相似图，而是会把数量传给视觉模型，让它先根据 `image_prompt_tasks.<任务名>.batch_prompt_plan` 写出 3 条不同用途的 prompt，例如封面图、产品主体介绍图、使用场景图，再由 DeepSeek 格式化为稳定 JSON，最后逐条 prompt 单独生成图片。视觉模型提示词、重试提示词和格式化提示词都在 `cfg/image_task.yaml` 中维护。
+
 ## 主要文件
 
 - `src/login_init.py`：手动登录并保存 `auth.json`。
@@ -112,9 +138,13 @@ python test/test_image_generation.py
 - `src/core_function/llm_planner.py`：调用模型根据页面元素规划下一步动作，并扩写正文。
 - `src/core_function/agent_note_publisher.py`：创建小红书草稿的主流程。
 - `src/core_function/image_generation_agent.py`：图片生成/编辑方法实现，不负责具体测试入口。
-- `test/test_image_generation.py`：读取 `cfg/task.yaml` 的图片生成任务配置并执行一次生成/编辑测试。
+- `src/core_function/image_prompt_agent.py`：根据现有图片生成图片生成提示词，并调用图片生成流程出图。
+- `test/test_image_generation.py`：读取 `cfg/image_task.yaml` 的图片生成任务配置并执行一次生成/编辑测试。
+- `test/test_image_prompt_generation.py`：读取 `image_prompt_pipeline_tasks`，先执行看图提示词任务，再执行图片生成任务。
+- `test/test_generate_images_and_create_draft.py`：先生成图片素材，再按顺序上传这些图片并创建图文草稿。
 - `cfg/model_config.py`：文本模型和图片模型的服务商、API Key、base_url、模型名和生成参数配置。
-- `cfg/task.yaml`：发帖任务和图片生成任务的任务参数、素材路径、规划规则、正文扩写提示词和兜底文案配置。
+- `cfg/task.yaml`：小红书发帖任务的任务参数、素材路径、规划规则、正文扩写提示词和兜底文案配置。
+- `cfg/image_task.yaml`：图片生成、看图写 prompt、批量 prompt 策划、视觉提示词模板和格式化提示词模板配置。
 - `test/test_create_draft.py`：创建草稿的端到端测试入口。
 
 ## 常见问题
