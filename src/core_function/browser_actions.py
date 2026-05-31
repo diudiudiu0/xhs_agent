@@ -1,25 +1,50 @@
-# src/core_function/browser_actions.py
 import os
-from playwright.async_api import async_playwright
 from pathlib import Path
+
+from playwright.async_api import async_playwright
+
 
 # 获取项目根目录（向上三级：browser_actions.py -> core_function -> src -> root）
 PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 AUTH_FILE = str(PROJECT_ROOT / "auth.json")
-async def open_creator_home(headless=False):
+BROWSER_PROFILE_DIR = PROJECT_ROOT / ".browser_profile" / "xhs_creator"
+
+
+class _BrowserCloser:
+    def __init__(self, close_target):
+        self._close_target = close_target
+
+    async def close(self):
+        await self._close_target.close()
+
+
+async def open_creator_home(headless=False, persistent=True):
     """
     返回一个已登录且位于创作中心首页的 page 对象。
-    如果 auth.json 不存在，需要先手动运行登录脚本。
+
+    persistent=True 时复用项目内浏览器 profile。小红书草稿提示“草稿存储于当前浏览器本地”，
+    因此创建草稿/继续观察草稿时应优先使用 persistent context。
     """
-    if not os.path.exists(AUTH_FILE):
+    if not persistent and not os.path.exists(AUTH_FILE):
         raise FileNotFoundError("未找到登录状态文件，请先运行src下的login_init.py 手动登录。")
     p = await async_playwright().start()
-    browser = await p.chromium.launch(headless=headless)
-    context = await browser.new_context(
-        storage_state=AUTH_FILE,
-        viewport={"width": 1366, "height": 900},
-    )
-    page = await context.new_page()
+
+    if persistent:
+        BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        context = await p.chromium.launch_persistent_context(
+            user_data_dir=str(BROWSER_PROFILE_DIR),
+            headless=headless,
+            viewport={"width": 1366, "height": 900},
+        )
+        browser = _BrowserCloser(context)
+        page = context.pages[0] if context.pages else await context.new_page()
+    else:
+        browser = await p.chromium.launch(headless=headless)
+        context = await browser.new_context(
+            storage_state=AUTH_FILE,
+            viewport={"width": 1366, "height": 900},
+        )
+        page = await context.new_page()
 
     await page.goto("https://creator.xiaohongshu.com/creator/home", wait_until="domcontentloaded")
     try:

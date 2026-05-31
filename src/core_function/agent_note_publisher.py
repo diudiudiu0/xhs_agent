@@ -193,7 +193,7 @@ async def agent_create_note_draft(
     default_image_file: str | None = None,
     default_video_file: str | None = None,
 ):
-    task_input = get_note_task_inputs(validate=True)
+    task_input = get_note_task_inputs(validate=False)
     post_type = post_type or task_input["post_type"]
     title = title or task_input["title"]
     content = content or task_input["seed_content"]

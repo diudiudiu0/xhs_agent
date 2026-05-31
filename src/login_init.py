@@ -1,41 +1,47 @@
-# src/core_function/login_manager.py
 import asyncio
-import os
+import pathlib
+
 from playwright.async_api import async_playwright
 
-# 指定 auth.json 的绝对路径，确保无论从哪运行都保存在项目根目录
-import pathlib
+
 PROJECT_ROOT = pathlib.Path(__file__).parent.parent.resolve()
 AUTH_FILE = str(PROJECT_ROOT / "auth.json")
+BROWSER_PROFILE_DIR = PROJECT_ROOT / ".browser_profile" / "xhs_creator"
+
 
 async def login():
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
-        context = await browser.new_context(viewport={"width": 1280, "height": 800})
-        page = await context.new_page()
+        BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        context = await p.chromium.launch_persistent_context(
+            user_data_dir=str(BROWSER_PROFILE_DIR),
+            headless=False,
+            viewport={"width": 1280, "height": 800},
+        )
+        page = context.pages[0] if context.pages else await context.new_page()
 
         await page.goto("https://creator.xiaohongshu.com/")
         print("请在打开的浏览器中完成登录（手机扫码或账号密码），登录成功后程序会自动继续...")
+        print(f"本次登录会写入持久浏览器目录：{BROWSER_PROFILE_DIR}")
 
-        # 等待登录成功：以页面出现“发布笔记”按钮或跳转到创作中心首页为准
         try:
-            await page.wait_for_selector("text=发布笔记", timeout=120000)  # 最长等2分钟
+            await page.wait_for_selector("text=发布笔记", timeout=120000)
             print("登录成功！")
         except Exception:
-            # 如果没检测到按钮，可能是登录后页面跳转了，手动检查
             await asyncio.sleep(3)
             print(f"当前 URL: {page.url}")
             if "creator" in page.url:
                 print("已登录，继续保存状态。")
             else:
                 print("登录似乎未成功，请重试。")
-                await browser.close()
+                await context.close()
                 return
 
-        # 保存登录状态
+        # auth.json 兼容非持久 context；真正用于保留本地草稿的是 .browser_profile。
         await context.storage_state(path=AUTH_FILE)
         print(f"登录状态已保存到：{AUTH_FILE}")
-        await browser.close()
+        print(f"持久浏览器数据已保存在：{BROWSER_PROFILE_DIR}")
+        await context.close()
+
 
 if __name__ == "__main__":
     asyncio.run(login())

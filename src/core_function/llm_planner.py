@@ -114,7 +114,7 @@ def get_note_task_inputs(validate: bool = True) -> dict:
 
 
 def build_task_description(title: str | None = None, content: str | None = None) -> str:
-    task_input = get_note_task_inputs(validate=True)
+    task_input = get_note_task_inputs(validate=False)
     title = title or task_input["title"]
     content = content or task_input["seed_content"]
     task_config = get_active_task_config()
@@ -138,6 +138,117 @@ def _get_client():
     )
 
 
+def _style_values(content_config: dict) -> dict:
+    style_config = content_config.get("style", {})
+    return {
+        "account_role": style_config.get("account_role", "小红书商品推荐账号的运营写手"),
+        "target_user": style_config.get("target_user", "对该主题感兴趣的用户"),
+        "tone": style_config.get("tone", "真实、实用、自然"),
+        "structure": style_config.get("structure", "痛点引入、选购建议、场景推荐、结尾互动"),
+        "extra_requirements": style_config.get("extra_requirements", "不要夸大功效，只输出正文"),
+    }
+
+
+def _remove_question_marks(text: str) -> str:
+    return (text or "").replace("？", "。").replace("?", "。").strip()
+
+
+def _extract_json_object(raw_text: str) -> dict | None:
+    if not raw_text:
+        return None
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}") + 1
+    if start == -1 or end <= start:
+        return None
+    try:
+        return json.loads(cleaned[start:end])
+    except json.JSONDecodeError:
+        return None
+
+
+def generate_note_text_from_image_prompts(
+    image_prompts: list[str],
+    title: str | None = None,
+    seed_content: str | None = None,
+    topic: str | None = None,
+    target_chars: int | None = None,
+) -> dict:
+    """
+    根据图片生成提示词规划小红书标题和正文。
+    - title 为空：生成标题和正文。
+    - title 非空：保留标题，结合标题和图片提示词生成正文。
+    """
+    task_input = get_note_task_inputs(validate=False)
+    task_config = get_active_task_config()
+    content_config = task_config.get("content_generation", {})
+
+    title = (title if title is not None else task_input["title"]).strip()
+    seed_content = (seed_content if seed_content is not None else task_input["seed_content"]).strip()
+    topic = (topic if topic is not None else task_input["topic"]).strip()
+    target_chars = target_chars or task_input["target_chars"]
+    image_prompts_text = "\n\n".join(
+        f"[{index}] {prompt}" for index, prompt in enumerate(image_prompts, start=1)
+    )
+
+    style = _style_values(content_config)
+    values = {
+        **style,
+        "topic": topic,
+        "title": title,
+        "seed_content": seed_content,
+        "target_chars": target_chars,
+        "image_prompts_text": image_prompts_text,
+    }
+
+    if title:
+        prompt_template = content_config.get("image_prompt_content_template", "")
+        prompt = prompt_template.format(**values)
+    else:
+        prompt_template = content_config.get("image_prompt_title_content_template", "")
+        prompt = prompt_template.format(**values)
+
+    fallback_title = title or task_input["title"] or topic or "脚轮实用推荐"
+    fallback_content = content_config.get("fallback_content", seed_content)
+
+    try:
+        client = _get_client()
+        response = client.chat.completions.create(
+            model=MODEL_CONFIG["content_model"],
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=MODEL_CONFIG.get("content_max_tokens", 1800),
+            temperature=MODEL_CONFIG.get("content_temperature", 0.7),
+        )
+        raw_text = (response.choices[0].message.content or "").strip()
+        if title:
+            content = raw_text
+        else:
+            parsed = _extract_json_object(raw_text)
+            title = (parsed or {}).get("title", "").strip() if parsed else ""
+            content = (parsed or {}).get("content", "").strip() if parsed else ""
+            if not content:
+                content = raw_text
+            if not title:
+                title = fallback_title
+
+        content = _remove_question_marks(content)
+        title = _remove_question_marks(title or fallback_title)
+        if content:
+            print(f"已根据图片提示词生成发帖内容，标题：{title}，正文长度约 {len(content)} 字符")
+            return {"title": title, "content": content}
+    except Exception as exc:
+        print(f"根据图片提示词生成发帖内容失败，使用兜底内容：{exc}")
+
+    return {
+        "title": _remove_question_marks(fallback_title),
+        "content": _remove_question_marks(fallback_content),
+    }
+
+
 def expand_note_content(
     title: str | None = None,
     seed_content: str | None = None,
@@ -148,7 +259,7 @@ def expand_note_content(
     将用户给出的简短需求扩写成小红书商品推荐正文。
     DeepSeek 失败时返回本地兜底文案，保证测试流程不被内容生成阻塞。
     """
-    task_input = get_note_task_inputs(validate=True)
+    task_input = get_note_task_inputs(validate=False)
     title = title or task_input["title"]
     seed_content = seed_content or task_input["seed_content"]
     topic = topic or task_input["topic"]
@@ -157,7 +268,7 @@ def expand_note_content(
 
     task_config = get_active_task_config()
     content_config = task_config.get("content_generation", {})
-    style_config = content_config.get("style", {})
+    style_config = _style_values(content_config)
     prompt_template = content_config.get("prompt_template", "")
     prompt = prompt_template.format(
         topic=topic,
@@ -166,11 +277,11 @@ def expand_note_content(
         target_chars=target_chars,
         post_type=task_input["post_type"],
         post_type_name=post_type_name,
-        account_role=style_config.get("account_role", "小红书商品推荐账号的运营写手"),
-        target_user=style_config.get("target_user", "对该主题感兴趣的用户"),
-        tone=style_config.get("tone", "真实、实用、自然"),
-        structure=style_config.get("structure", "痛点引入、选购建议、场景推荐、结尾互动"),
-        extra_requirements=style_config.get("extra_requirements", "不要夸大功效，只输出正文"),
+        account_role=style_config["account_role"],
+        target_user=style_config["target_user"],
+        tone=style_config["tone"],
+        structure=style_config["structure"],
+        extra_requirements=style_config["extra_requirements"],
     )
     try:
         client = _get_client()
@@ -182,12 +293,13 @@ def expand_note_content(
         )
         text = (response.choices[0].message.content or "").strip()
         if text:
+            text = _remove_question_marks(text)
             print(f"已生成扩写正文，长度约 {len(text)} 字符")
             return text
     except Exception as exc:
         print(f"正文扩写失败，使用本地兜底文案：{exc}")
 
-    return content_config.get("fallback_content", seed_content)
+    return _remove_question_marks(content_config.get("fallback_content", seed_content))
 
 
 async def _get_page_context(page):
