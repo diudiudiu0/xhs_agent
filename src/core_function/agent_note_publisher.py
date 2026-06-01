@@ -14,6 +14,11 @@ from src.core_function.browser_skills import (
 )
 from src.core_function.llm_planner import build_task_description, expand_note_content, get_next_action, get_note_task_inputs
 from src.core_function.element_extractor import extract_interactive_elements
+from src.core_function.browser_state_observer import (
+    observe_browser_state,
+    summarize_browser_state,
+    wait_for_browser_feedback,
+)
 
 
 STOP_PUBLISH_KEYWORDS = ["发布", "提交", "确认发布", "立即发布"]
@@ -243,6 +248,23 @@ async def agent_create_note_draft(
             print("页面已关闭，Agent 停止执行")
             break
 
+        browser_state = await observe_browser_state(page)
+        state["browser_state"] = browser_state
+        print(f"浏览器状态快照：{summarize_browser_state(browser_state)}")
+        if browser_state.get("page_closed"):
+            print("浏览器状态：页面已关闭，Agent 停止执行")
+            break
+        if not browser_state.get("page_responsive"):
+            print("浏览器状态：页面暂未响应，等待后重新观察")
+            await wait_seconds(page, 2)
+            continue
+        if browser_state.get("loading_phase") in {"dom_loading", "page_loading"}:
+            print(f"浏览器状态：{browser_state.get('loading_phase')}，等待页面加载")
+            await wait_seconds(page, 2)
+            continue
+        if browser_state.get("dialogs", {}).get("visible"):
+            print(f"浏览器状态：检测到网页弹窗/浮层 {browser_state.get('dialogs', {}).get('items', [])[:1]}")
+
         # 获取当前页面元素缓存
         elements_cache = await extract_interactive_elements(page)
         if not elements_cache:
@@ -283,9 +305,30 @@ async def agent_create_note_draft(
             elif action["action"] == "click" and _is_dangerous_publish(elements_cache[idx]):
                 print(f"阻止可能正式发布的点击：{elements_cache[idx]['desc']}")
                 action = {"action": "done"}
+            elif (
+                action["action"] == "click"
+                and state.get("last_action_observation", {}).get("status") == "no_visible_response"
+                and _recent_repeat_count(history, action, elements_cache) >= 1
+            ):
+                print("上一次相同点击没有页面反馈，本轮改为等待重新观察，避免无效连点")
+                action = {"action": "wait"}
             elif _recent_repeat_count(history, action, elements_cache) >= 2:
                 print("检测到同一动作连续重复且页面无进展，改为等待并重新观察页面")
                 action = {"action": "wait"}
+
+        before_action_state = browser_state
+        should_wait_for_feedback = action.get("action") in {
+            "click",
+            "fill",
+            "fill_title",
+            "fill_content",
+            "upload_images",
+            "upload_media",
+            "save_and_leave",
+            "back",
+        }
+        if should_wait_for_feedback:
+            print(f"动作前状态：{summarize_browser_state(before_action_state)}")
 
         if action["action"] == "done":
             print("Agent 任务完成")
@@ -423,6 +466,31 @@ async def agent_create_note_draft(
             print(f"未知动作: {action}")
             await wait_seconds(page, 1)
 
+        if should_wait_for_feedback:
+            after_action_state, action_observation = await wait_for_browser_feedback(
+                page,
+                before_action_state,
+                timeout=3.0,
+                interval=0.5,
+            )
+        else:
+            after_action_state = await observe_browser_state(page)
+            action_observation = {
+                "status": "not_observed_for_action",
+                "loading_phase": after_action_state.get("loading_phase"),
+                "dialog_visible": after_action_state.get("dialogs", {}).get("visible", False),
+                "file_input_count": len(after_action_state.get("file_inputs") or []),
+            }
+        state["last_action_observation"] = action_observation
+        state["browser_state"] = after_action_state
+        print(f"动作后状态：{summarize_browser_state(after_action_state)}")
+        print(f"页面反馈判断：{action_observation}")
+        if (
+            action.get("action") == "click"
+            and action_observation.get("status") == "no_visible_response"
+        ):
+            print("页面反馈：本次点击未观察到 URL、DOM、弹窗或加载状态变化，下一轮会避免盲目重复点击")
+
         # 记录历史（包含 element_index 以便追踪）
         history.append({
             "step": step + 1,
@@ -435,7 +503,7 @@ async def agent_create_note_draft(
             "value": action.get("value", ""),
             "reason": action.get("reason", ""),
             "expected_result": action.get("expected_result", ""),
-            "result": f"url={page.url}",
+            "result": f"url={page.url} browser={action_observation.get('status')}",
         })
         state["last_page_signature"] = state.get("current_page_signature", "")
 

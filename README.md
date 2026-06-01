@@ -4,9 +4,10 @@
 
 ## 当前能力
 
-- 复用 `auth.json` 登录状态进入小红书创作中心。
+- 复用项目内 `.browser_profile/xhs_creator` 持久浏览器目录进入小红书创作中心，同时保留 `auth.json` 兼容旧流程。
 - 自动提取页面上的按钮、输入框、富文本编辑区等可交互元素。
 - 使用阶段状态、最近动作历史、页面上下文和 DeepSeek 共同规划下一步，避免重复点击同一个入口。
+- 采集浏览器运行状态，包括页面是否关闭、DOM 是否加载中、网络是否忙、页面是否响应、网页弹窗/浮层、文件上传 input 线索，以及动作后页面是否发生可见响应。
 - 支持按 `post_type` 创建图文或视频草稿；图文从本地图片文件夹取素材，视频从本地视频文件夹取素材。
 - 素材上传步骤由 Playwright 直接写入 file input，不依赖模型识别系统弹窗。
 - 支持在发布前用 DeepSeek 将简短要点扩写成约 1000 字的小红书商品推荐正文。
@@ -57,7 +58,9 @@ playwright install chromium
 python src/login_init.py
 ```
 
-浏览器打开后，请手动完成扫码或账号登录。登录成功后程序会把登录状态保存到项目根目录的 `auth.json`。
+浏览器打开后，请手动完成扫码或账号登录。登录成功后程序会把登录状态保存到项目根目录的 `auth.json`，同时写入 `.browser_profile/xhs_creator` 持久浏览器目录。
+
+小红书创作中心提示“草稿存储于当前使用的浏览器本地”。因此本项目默认使用 Playwright persistent context 复用同一个浏览器数据目录，而不是每次只用 `auth.json` 创建全新的临时 context。这样更适合保存和继续观察本地草稿。
 
 ## 创建草稿测试
 
@@ -71,6 +74,34 @@ python test/test_create_draft.py
 
 支持的图片格式：`.jpg`、`.jpeg`、`.png`、`.webp`、`.bmp`、`.gif`。
 支持的视频格式：`.mp4`、`.mov`、`.avi`、`.mkv`、`.webm`。
+
+## 终端交互 Agent
+
+如果希望通过终端与小红书个人账号 Agent 对话，运行：
+
+```bash
+python src/xhs_terminal_agent.py
+```
+
+终端 Agent 会维护当前会话记忆，已封装的技能包括：
+
+- 根据本地图片或 URL 生成图片提示词。
+- 根据用户反馈继续修改当前提示词。
+- 使用当前提示词生成图片。
+- 根据图片提示词生成标题和正文。
+- 打开创作中心、获取页面状态、处理网页弹窗。
+- 使用当前生成的图片和文案创建小红书图文草稿。
+
+示例输入：
+
+```text
+根据 doc/pic_exam.png 这张图片，帮我生成 3 条脚轮商品海报提示词
+第二张提示词加上 M6 参数信息，第一张不要纯白背景
+满意了，生成图片
+写文案
+用这些图片创建草稿
+页面状态
+```
 
 ## 生成本地图片素材
 
@@ -111,6 +142,12 @@ python test/test_generate_images_and_create_draft.py
 
 这个流程会先执行 `cfg/image_task.yaml` 中的图片生成流水线，再把本次生成出的图片路径按数字文件名顺序传给发帖 Agent，随后进入创作中心上传图片、填写标题、扩写/填写正文并暂存离开。这里不会从输出目录随机抽图。
 
+组合流程中的标题和正文会根据图片生成提示词重新规划：
+
+- 如果 `cfg/task.yaml` 的 `note_tasks.<任务名>.input.title` 为空，程序会根据图片提示词生成标题和正文。
+- 如果标题非空，程序会保留标题，并结合标题和图片提示词生成正文。
+- 正文模板要求不使用疑问句，不出现中文或英文问号。
+
 ## 看图生成图片提示词
 
 如果想先让视觉大模型读取现有图片，再自动写出图片生成提示词，然后把这个提示词交给图片生成模型出图，运行：
@@ -131,12 +168,15 @@ python test/test_image_prompt_generation.py
 
 ## 主要文件
 
-- `src/login_init.py`：手动登录并保存 `auth.json`。
+- `src/login_init.py`：手动登录，保存 `auth.json`，并初始化 `.browser_profile/xhs_creator` 持久浏览器目录。
 - `src/core_function/browser_actions.py`：启动浏览器并进入创作中心。
 - `src/core_function/element_extractor.py`：提取当前页面可交互元素。
 - `src/core_function/browser_skills.py`：点击、填写、等待、上传图片/视频等浏览器动作。
+- `src/core_function/browser_state_observer.py`：采集页面加载、响应、弹窗、文件 input 和动作后页面变化状态。
 - `src/core_function/llm_planner.py`：调用模型根据页面元素规划下一步动作，并扩写正文。
 - `src/core_function/agent_note_publisher.py`：创建小红书草稿的主流程。
+- `src/core_function/xhs_agent_skills.py`：终端 Agent 的技能封装层，统一调用提示词生成、提示词修改、图片生成、页面状态和创建草稿。
+- `src/xhs_terminal_agent.py`：小红书个人账号终端交互 Agent 入口。
 - `src/core_function/image_generation_agent.py`：图片生成/编辑方法实现，不负责具体测试入口。
 - `src/core_function/image_prompt_agent.py`：根据现有图片生成图片生成提示词，并调用图片生成流程出图。
 - `test/test_image_generation.py`：读取 `cfg/image_task.yaml` 的图片生成任务配置并执行一次生成/编辑测试。
@@ -178,3 +218,7 @@ python src/login_init.py
 ```
 
 然后再次运行测试。
+
+### 草稿看起来没有保存
+
+小红书图文草稿依赖当前浏览器本地数据。请确认先运行过 `python src/login_init.py`，并且后续测试使用默认的持久浏览器目录 `.browser_profile/xhs_creator`。不要手动删除 `.browser_profile`，也不要在浏览器中清除站点数据，否则本地草稿可能丢失。

@@ -1,13 +1,15 @@
 import os
+import asyncio
 from pathlib import Path
 
-from playwright.async_api import async_playwright
+from playwright.async_api import Error as PlaywrightError, async_playwright
 
 
 # 获取项目根目录（向上三级：browser_actions.py -> core_function -> src -> root）
 PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 AUTH_FILE = str(PROJECT_ROOT / "auth.json")
 BROWSER_PROFILE_DIR = PROJECT_ROOT / ".browser_profile" / "xhs_creator"
+CREATOR_HOME_URL = "https://creator.xiaohongshu.com/creator/home"
 
 
 class _BrowserCloser:
@@ -16,6 +18,49 @@ class _BrowserCloser:
 
     async def close(self):
         await self._close_target.close()
+
+
+async def _page_has_creator_shell(page, timeout=2500):
+    if page.is_closed():
+        return False
+    try:
+        await page.wait_for_selector("text=发布笔记", timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+async def _reuse_existing_creator_page(context):
+    for page in context.pages:
+        if page.is_closed():
+            continue
+        if "xiaohongshu.com" not in page.url:
+            continue
+        if await _page_has_creator_shell(page):
+            print(f"已复用现有小红书创作页面：{page.url}")
+            return page
+    return None
+
+
+async def _goto_creator_home_with_retry(page, retries=3):
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            await page.goto(CREATOR_HOME_URL, wait_until="domcontentloaded", timeout=30000)
+            return
+        except PlaywrightError as exc:
+            last_error = exc
+            message = str(exc)
+            print(f"打开创作中心失败，准备重试 ({attempt}/{retries})：{message.splitlines()[0]}")
+            if "ERR_NAME_NOT_RESOLVED" in message:
+                await asyncio.sleep(2 * attempt)
+            else:
+                await asyncio.sleep(1)
+    raise RuntimeError(
+        "无法打开小红书创作中心，浏览器 DNS/网络解析失败。"
+        "请检查本机网络、代理、DNS 或稍后重试。原始错误："
+        f"{last_error}"
+    )
 
 
 async def open_creator_home(headless=False, persistent=True):
@@ -29,29 +74,50 @@ async def open_creator_home(headless=False, persistent=True):
         raise FileNotFoundError("未找到登录状态文件，请先运行src下的login_init.py 手动登录。")
     p = await async_playwright().start()
 
-    if persistent:
-        BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=str(BROWSER_PROFILE_DIR),
-            headless=headless,
-            viewport={"width": 1366, "height": 900},
-        )
-        browser = _BrowserCloser(context)
-        page = context.pages[0] if context.pages else await context.new_page()
-    else:
-        browser = await p.chromium.launch(headless=headless)
-        context = await browser.new_context(
-            storage_state=AUTH_FILE,
-            viewport={"width": 1366, "height": 900},
-        )
-        page = await context.new_page()
-
-    await page.goto("https://creator.xiaohongshu.com/creator/home", wait_until="domcontentloaded")
+    browser = None
+    context = None
     try:
-        # 等待核心元素出现，证明页面加载成功
-        await page.wait_for_selector("text=发布笔记", timeout=10000)
-        print("已成功进入创作中心")
+        if persistent:
+            BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+            try:
+                context = await p.chromium.launch_persistent_context(
+                    user_data_dir=str(BROWSER_PROFILE_DIR),
+                    headless=headless,
+                    viewport={"width": 1366, "height": 900},
+                )
+            except PlaywrightError as exc:
+                message = str(exc)
+                if "Target page, context or browser has been closed" in message:
+                    raise RuntimeError(
+                        "无法启动小红书持久浏览器 profile。通常是因为已有另一个 Agent/Chromium "
+                        f"正在使用 {BROWSER_PROFILE_DIR}。请先关闭旧的浏览器窗口或停止旧的终端 Agent，"
+                        "再重新执行任务。"
+                    ) from exc
+                raise
+            browser = _BrowserCloser(context)
+            page = await _reuse_existing_creator_page(context)
+            if page is None:
+                page = context.pages[0] if context.pages else await context.new_page()
+                await _goto_creator_home_with_retry(page)
+        else:
+            browser = await p.chromium.launch(headless=headless)
+            context = await browser.new_context(
+                storage_state=AUTH_FILE,
+                viewport={"width": 1366, "height": 900},
+            )
+            page = await context.new_page()
+            await _goto_creator_home_with_retry(page)
+
+        try:
+            # 等待核心元素出现，证明页面加载成功
+            await page.wait_for_selector("text=发布笔记", timeout=10000)
+            print("已成功进入创作中心")
+        except Exception:
+            # 如果没找到，打印当前 URL 方便调试
+            print(f"警告：未检测到'发布笔记'按钮，当前 URL: {page.url}")
+        return page, browser, context, p
     except Exception:
-        # 如果没找到，打印当前 URL 方便调试
-        print(f"警告：未检测到'发布笔记'按钮，当前 URL: {page.url}")
-    return page, browser, context,p
+        if browser:
+            await browser.close()
+        await p.stop()
+        raise
