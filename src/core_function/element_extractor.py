@@ -71,7 +71,10 @@ async def _do_extract(page):
             '[class*="editor"]',
             '[class*="Editor"]'
         ].join(',');
-        const priorityWords = ['暂存离开', '暂存并离开', '保存草稿', '存草稿', '保存并离开', '离开并保存'];
+        const priorityWords = [
+            '草稿箱', '草稿',
+            '暂存离开', '暂存并离开', '保存草稿', '存草稿', '保存并离开', '离开并保存'
+        ];
 
         const nodes = Array.from(document.querySelectorAll(selector));
         const seenNodes = new Set();
@@ -170,6 +173,30 @@ async def _do_extract(page):
                 type,
                 text,
                 desc: `[${type}] ${text}`,
+                selector: `[data-xhs-agent-id="${agentId}"]`
+            });
+            rawIndex += 1;
+        }
+
+        const exactPriorityNodes = Array.from(document.querySelectorAll('body *'))
+            .filter(el => !seenNodes.has(el) && isVisible(el))
+            .map(el => ({el, text: normalize(el.innerText || el.textContent)}))
+            .filter(item => item.text && item.text.length <= 40 && priorityWords.some(word => item.text.includes(word)))
+            .sort((a, b) => a.text.length - b.text.length);
+
+        for (const item of exactPriorityNodes) {
+            const el = item.el;
+            const text = item.text;
+            const target = el;
+            if (seenTargets.has(target)) continue;
+            seenTargets.add(target);
+            const agentId = `xhs-agent-${Date.now()}-${rawIndex}`;
+            target.setAttribute('data-xhs-agent-id', agentId);
+            result.push({
+                index: result.length,
+                type: elementType(el),
+                text,
+                desc: `[${elementType(el)}] ${text}`,
                 selector: `[data-xhs-agent-id="${agentId}"]`
             });
             rawIndex += 1;

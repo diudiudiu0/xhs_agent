@@ -253,16 +253,30 @@ class XhsAgentSkills:
             print(f"当前识别到草稿箱数量：{count} 篇")
         return result
 
-    async def explore_page_task(self, user_goal: str, max_steps: int = 12) -> dict:
+    async def explore_page_task(
+        self,
+        user_goal: str,
+        max_steps: int = 12,
+        worklog_hints: list[dict] | None = None,
+    ) -> dict:
         """对没有固定 skill 的页面任务进行自主探索，并沉淀成功路径。"""
         page = await self.open_creator_page()
-        result = await self.explorer.explore(page, user_goal=user_goal, max_steps=max_steps)
+        result = await self.explorer.explore(
+            page,
+            user_goal=user_goal,
+            max_steps=max_steps,
+            worklog_hints=worklog_hints or [],
+        )
         if result.get("success"):
             print("探索任务完成：")
         else:
             print("探索任务未完全完成：")
         print(result.get("answer", ""))
         return result
+
+    def cleanup_page_task_trace(self):
+        """删除单次网页探索产生的短期 trace 文件。"""
+        self.explorer.trace.clear()
 
     async def handle_page_dialogs(self) -> bool:
         """尝试处理网页弹窗/上传收尾弹窗。"""

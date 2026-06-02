@@ -40,8 +40,7 @@ HELP_TEXT = """
 页面：
   打开页面                            打开小红书创作中心
   页面状态                            获取当前页面状态
-  查看草稿箱数量                      进入创作中心并读取草稿箱数量
-  探索页面任务                        没有固定技能时，观察页面并自主尝试完成任务
+  探索页面任务                        统一处理查看、编辑、删除、草稿箱等网页操作
   处理弹窗                            尝试处理网页弹窗/上传收尾弹窗
 
 也可以直接说自然语言，例如：
@@ -85,10 +84,14 @@ def _fallback_intent(user_text: str) -> dict:
         return {"action": "workflow_status", "args": {}}
     if text.lower() in {"memory", "status"} or text in {"记忆", "当前状态"}:
         return {"action": "memory", "args": {}}
-    if "草稿" in text and any(word in text for word in ("多少", "几", "数量", "有多少", "几篇", "多少篇")):
-        return {"action": "inspect_drafts", "args": {}}
     if _looks_like_page_exploration_task(text):
-        return {"action": "explore_page_task", "args": {"user_goal": text}}
+        return {
+            "action": "explore_page_task",
+            "args": {
+                "user_goal": text,
+                "requires_confirmation": _looks_like_destructive_page_task(text),
+            },
+        }
     if "页面状态" in text or "网页状态" in text:
         return {"action": "page_state", "args": {}}
     if "打开页面" in text or "创作中心" in text:
@@ -124,14 +127,28 @@ def _fallback_intent(user_text: str) -> dict:
 
 
 def _looks_like_page_exploration_task(text: str) -> bool:
-    page_nouns = ("草稿", "帖子", "笔记", "正文", "标题", "评论", "数据", "主页", "页面", "发帖")
-    task_verbs = ("查看", "返回", "读取", "获取", "找到", "打开", "进入", "帮我看", "给我看", "提取")
-    content_queries = ("正文", "内容", "标题", "是什么", "什么", "第", "第一篇", "较早", "最早")
+    page_nouns = ("草稿", "帖子", "笔记", "正文", "标题", "评论", "数据", "主页", "页面", "发帖", "文档", "作品", "那篇")
+    task_verbs = (
+        "查看", "返回", "读取", "获取", "找到", "打开", "进入", "帮我看", "给我看",
+        "提取", "编辑", "删除", "移除", "清空", "撤回", "删掉", "去掉"
+    )
+    content_queries = ("正文", "内容", "标题", "是什么", "什么", "第", "第一篇", "较早", "最早", "时间更早", "更早")
+    if "草稿" in text and any(word in text for word in ("多少", "几", "数量", "有多少", "几篇", "多少篇", "详情", "信息")):
+        return True
     if "草稿" in text and any(word in text for word in content_queries):
         return True
     if any(noun in text for noun in page_nouns) and any(verb in text for verb in task_verbs):
         return True
-    return "时间较早" in text or "最早编辑" in text
+    return "时间较早" in text or "最早编辑" in text or "时间更早" in text
+
+
+def _looks_like_destructive_page_task(text: str) -> bool:
+    destructive_verbs = ("删除", "移除", "清空", "撤回", "删掉", "去掉")
+    page_hints = (
+        "草稿", "帖子", "笔记", "文档", "作品", "那篇", "这篇", "那条", "这条",
+        "第一篇", "最早", "较早", "时间更早", "更早"
+    )
+    return any(word in text for word in destructive_verbs) and any(word in text for word in page_hints)
 
 
 def classify_intent(user_text: str) -> dict:
@@ -154,7 +171,6 @@ def classify_intent(user_text: str) -> dict:
 - create_draft
 - open_page
 - page_state
-- inspect_drafts
 - explore_page_task
 - handle_dialogs
 - chat
@@ -162,7 +178,7 @@ def classify_intent(user_text: str) -> dict:
 参数说明：
 - generate_prompts args 可包含 input_image、user_goal、count
 - revise_prompts args 必须包含 revision_instruction
-- explore_page_task args 必须包含 user_goal，用于处理需要在小红书网页里探索完成、但没有固定 skill 的任务
+- explore_page_task args 必须包含 user_goal；如果是删除/移除等高风险页面任务，args.requires_confirmation=true
 - 其他 action args 可为空
 
 只输出 JSON：
@@ -256,22 +272,51 @@ async def dispatch(skills: XhsAgentSkills, workflow: XhsWorkflow, intent: dict) 
         workflow.step("采集页面状态")
         workflow.step("输出状态摘要")
         return True, f"已输出页面状态：{state.get('loading_phase')}"
-    elif action == "inspect_drafts":
-        result = await skills.inspect_draft_count()
-        workflow.step("打开创作中心")
-        workflow.step("进入可见草稿入口")
-        workflow.step("读取草稿箱数量")
-        count = result.get("draft_count")
-        return True, "未识别到草稿箱数量" if count is None else f"草稿箱数量：{count} 篇"
     elif action == "explore_page_task":
         user_goal = args.get("user_goal") or args.get("message") or ""
+        if args.get("requires_confirmation"):
+            print("检测到删除/移除类高风险页面任务。")
+            print(f"任务内容：{user_goal}")
+            confirmation = input("确认继续请准确输入“确认删除”：").strip()
+            if confirmation != "确认删除":
+                return True, "用户取消删除/移除类页面任务"
+            user_goal = f"{user_goal}。这是用户已确认的删除/移除类任务：先定位目标对象，遇到最终确认弹窗时再点击确认；不要删除不匹配的对象。"
+        worklog_hints = workflow.search_experiences(user_goal)
+        if worklog_hints:
+            print(f"已从 xhs_agent_worklog.json 检索到 {len(worklog_hints)} 条相关成功经验：")
+            for index, hint in enumerate(worklog_hints, start=1):
+                request = hint.get("user_request", "")
+                score = hint.get("match_score")
+                reuse_level = hint.get("reuse_level")
+                ratio = hint.get("match_ratio")
+                request_ratio = hint.get("request_match_ratio")
+                request_overlap = "、".join(hint.get("request_overlap_terms", [])[:8])
+                overlap = "、".join(hint.get("overlap_terms", [])[:8])
+                print(
+                    f"  {index}. 之前请求：{request}；匹配分={score}，"
+                    f"复用级别={reuse_level}，"
+                    f"请求相似度={request_ratio}，整体相似度={ratio}，"
+                    f"请求重合={request_overlap}，整体重合={overlap}"
+                )
+        else:
+            print("未从 xhs_agent_worklog.json 检索到相关成功经验，进入自主探索")
         workflow.step("理解页面任务")
         workflow.step("观察页面和可交互元素", status="in_progress")
-        result = await skills.explore_page_task(user_goal=user_goal)
-        workflow.step("观察页面和可交互元素")
-        workflow.step("小步探索并观察反馈")
-        workflow.step("提取结果并记录成功路径")
-        return True, result.get("answer", "探索任务已执行")
+        try:
+            result = await skills.explore_page_task(user_goal=user_goal, worklog_hints=worklog_hints)
+            if not result.get("success"):
+                raise RuntimeError(result.get("answer") or "页面探索任务未完成")
+            workflow.step("观察页面和可交互元素")
+            workflow.step("小步探索并观察反馈")
+            workflow.step("提取结果并记录成功路径")
+            workflow.remember_experience(
+                user_request=args.get("user_goal") or user_goal,
+                result=result.get("answer", "探索任务已执行"),
+                raw_steps=result.get("steps") or [],
+            )
+            return True, result.get("answer", "探索任务已执行")
+        finally:
+            skills.cleanup_page_task_trace()
     elif action == "handle_dialogs":
         handled = await skills.handle_page_dialogs()
         workflow.step("打开或复用页面")

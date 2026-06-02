@@ -187,6 +187,13 @@ def _generate_or_edit_with_doubao(
         extra_body["image"] = _encode_image_as_data_url(input_image) if isinstance(input_image, Path) else input_image
 
     client = _build_doubao_client()
+    print(
+        "正在调用豆包/Seedream 图片生成接口："
+        f"model={model or IMAGE_MODEL_CONFIG.get('image_model', 'doubao-seedream-5-0-260128')}，"
+        f"size={size or IMAGE_MODEL_CONFIG.get('size', '2K')}，"
+        f"aspect_ratio={aspect_ratio or '未指定'}，count={count}",
+        flush=True,
+    )
     response = client.images.generate(
         model=model or IMAGE_MODEL_CONFIG.get("image_model", "doubao-seedream-5-0-260128"),
         prompt=prompt,

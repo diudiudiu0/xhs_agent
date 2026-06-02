@@ -2,6 +2,8 @@ import asyncio
 import hashlib
 from typing import Any
 
+from src.core_function.system_dialog_observer import get_native_dialog_state
+
 
 async def _safe_evaluate(page, script: str, fallback: Any = None, timeout: float = 2.0):
     try:
@@ -198,10 +200,7 @@ async def observe_browser_state(page) -> dict:
         },
         "dialogs": dialogs,
         "file_inputs": file_inputs,
-        "system_dialog": {
-            "native_file_chooser_observable": False,
-            "hint": "Playwright 不能被动读取操作系统文件选择器；本项目用 input[type=file].set_input_files 绕开系统弹窗。",
-        },
+        "system_dialog": get_native_dialog_state(),
     }
 
 
@@ -236,11 +235,13 @@ def summarize_browser_state(state: dict | None) -> str:
     state = state or {}
     dialogs = state.get("dialogs") or {}
     dom = state.get("dom") or {}
+    system_dialog = state.get("system_dialog") or {}
     return (
         f"phase={state.get('loading_phase')} "
         f"ready={state.get('ready_state')} "
         f"responsive={state.get('page_responsive')} "
         f"dialog={dialogs.get('visible', False)} "
+        f"native_dialog={system_dialog.get('possible_native_dialog_open', False)} "
         f"file_inputs={len(state.get('file_inputs') or [])} "
         f"spinners={dom.get('spinner_count', 0)} "
         f"url={state.get('url', '')}"

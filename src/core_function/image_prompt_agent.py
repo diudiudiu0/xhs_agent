@@ -410,6 +410,11 @@ def _call_vision_prompt_model(
                 current_user_content.append({"type": "text", "text": retry_instruction})
 
         try:
+            print(
+                f"正在调用看图提示词模型：{model_name}，目标提示词数量={prompt_count}，"
+                f"第 {attempt + 1}/{max_attempts} 次尝试...",
+                flush=True,
+            )
             response = client.chat.completions.create(
                 model=model_name,
                 messages=[
@@ -434,6 +439,7 @@ def _call_vision_prompt_model(
 
         generated_prompt = _extract_response_text(response)
         if generated_prompt:
+            print("看图提示词模型已返回内容。", flush=True)
             return generated_prompt
         empty_reasons.append(_get_first_choice_finish_reason(response))
 
@@ -460,6 +466,7 @@ def generate_image_prompts_from_image(
     """根据出图数量生成一组分工明确的图片生成提示词。"""
     prompt_task_config = prompt_task_config or get_active_image_prompt_task_config()
     prompt_count = _as_positive_int((generation_task_config or {}).get("count"), 1)
+    print(f"准备根据参考图生成 {prompt_count} 条图片提示词...", flush=True)
     image_url = _resolve_required_image_url(prompt_task_config)
     prompt_instruction = _build_prompt_instruction(
         prompt_task_config,
@@ -475,6 +482,7 @@ def generate_image_prompts_from_image(
     if prompt_count == 1:
         return [raw_text]
     try:
+        print("正在调用文本模型整理批量图片提示词...", flush=True)
         return _format_prompts_with_text_model(raw_text, prompt_count, prompt_task_config, generation_task_config)
     except Exception as exc:
         print(f"DeepSeek 格式化提示词失败，尝试本地解析兜底：{exc}")
