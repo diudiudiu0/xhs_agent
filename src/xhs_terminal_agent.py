@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from cfg.model_config import MODEL_CONFIG
+from src.core_function.xhs_action_registry import VALID_ACTION_NAMES, render_action_catalog
 from src.core_function.xhs_workflow import XhsWorkflow
 from src.core_function.xhs_agent_skills import XhsAgentSkills
 
@@ -74,7 +75,7 @@ def _extract_json(raw_text: str) -> dict | None:
         return None
 
 
-def _fallback_intent(user_text: str) -> dict:
+def _exact_terminal_intent(user_text: str) -> dict | None:
     text = user_text.strip()
     if text.lower() in {"help", "h"} or text in {"帮助", "菜单"}:
         return {"action": "help", "args": {}}
@@ -84,6 +85,52 @@ def _fallback_intent(user_text: str) -> dict:
         return {"action": "workflow_status", "args": {}}
     if text.lower() in {"memory", "status"} or text in {"记忆", "当前状态"}:
         return {"action": "memory", "args": {}}
+    return None
+
+
+def _extract_prompt_args(text: str) -> dict:
+    image_match = re.search(r"(?:图片|图|image)\s*[=:：]\s*([^\s]+)", text)
+    if not image_match:
+        image_match = re.search(
+            r"([A-Za-z]:[\\/][^\s，,。；;]+?\.(?:png|jpg|jpeg|webp)|[^\s，,。；;]+?\.(?:png|jpg|jpeg|webp))",
+            text,
+            flags=re.IGNORECASE,
+        )
+    count_match = re.search(r"(?:数量|count)\s*[=:：]\s*(\d+)", text)
+    if not count_match:
+        count_match = re.search(r"(\d+)\s*(?:条|张|个)", text)
+    return {
+        "input_image": image_match.group(1) if image_match else None,
+        "count": int(count_match.group(1)) if count_match else None,
+        "user_goal": text,
+    }
+
+
+def _normalize_intent(intent: dict, user_text: str) -> dict:
+    if not isinstance(intent, dict):
+        return {"action": "chat", "args": {"message": user_text}}
+    action = intent.get("action")
+    if action not in VALID_ACTION_NAMES and action not in {"help", "exit", "memory", "workflow_status"}:
+        action = "chat"
+    args = intent.get("args") if isinstance(intent.get("args"), dict) else {}
+
+    if action == "generate_prompts":
+        parsed_args = _extract_prompt_args(user_text)
+        parsed_args.update({key: value for key, value in args.items() if value is not None})
+        args = parsed_args
+    elif action == "revise_prompts":
+        args.setdefault("revision_instruction", user_text)
+    elif action == "explore_page_task":
+        args.setdefault("user_goal", user_text)
+        args["requires_confirmation"] = bool(args.get("requires_confirmation")) or _looks_like_destructive_page_task(user_text)
+    elif action == "chat":
+        args.setdefault("message", user_text)
+
+    return {"action": action, "args": args}
+
+
+def _safe_fallback_intent(user_text: str) -> dict:
+    text = user_text.strip()
     if _looks_like_page_exploration_task(text):
         return {
             "action": "explore_page_task",
@@ -92,37 +139,8 @@ def _fallback_intent(user_text: str) -> dict:
                 "requires_confirmation": _looks_like_destructive_page_task(text),
             },
         }
-    if "页面状态" in text or "网页状态" in text:
-        return {"action": "page_state", "args": {}}
-    if "打开页面" in text or "创作中心" in text:
-        return {"action": "open_page", "args": {}}
-    if "处理弹窗" in text or "关闭弹窗" in text:
-        return {"action": "handle_dialogs", "args": {}}
-    if "修改提示词" in text or "改提示词" in text or "优化提示词" in text:
-        return {"action": "revise_prompts", "args": {"revision_instruction": text}}
-    if "提示词" in text and any(word in text for word in ("修改", "改", "优化", "调整", "增加", "减少", "不要", "改成", "加上", "加入")):
-        return {"action": "revise_prompts", "args": {"revision_instruction": text}}
-    if "生成图片" in text or "出图" in text:
-        return {"action": "generate_images", "args": {}}
-    if "写文案" in text or "写正文" in text or "写标题" in text:
-        return {"action": "plan_note_text", "args": {}}
-    if "创建草稿" in text or "发帖" in text or "发布草稿" in text:
-        return {"action": "create_draft", "args": {}}
     if "提示词" in text:
-        image_match = re.search(r"(?:图片|图|image)\s*[=:：]\s*([^\s]+)", text)
-        if not image_match:
-            image_match = re.search(r"([A-Za-z]:[\\/][^\s，,。；;]+?\.(?:png|jpg|jpeg|webp)|[^\s，,。；;]+?\.(?:png|jpg|jpeg|webp))", text, flags=re.IGNORECASE)
-        count_match = re.search(r"(?:数量|count)\s*[=:：]\s*(\d+)", text)
-        if not count_match:
-            count_match = re.search(r"(\d+)\s*(?:条|张|个)", text)
-        return {
-            "action": "generate_prompts",
-            "args": {
-                "input_image": image_match.group(1) if image_match else None,
-                "count": int(count_match.group(1)) if count_match else None,
-                "user_goal": text,
-            },
-        }
+        return {"action": "generate_prompts", "args": _extract_prompt_args(text)}
     return {"action": "chat", "args": {"message": text}}
 
 
@@ -130,7 +148,8 @@ def _looks_like_page_exploration_task(text: str) -> bool:
     page_nouns = ("草稿", "帖子", "笔记", "正文", "标题", "评论", "数据", "主页", "页面", "发帖", "文档", "作品", "那篇")
     task_verbs = (
         "查看", "返回", "读取", "获取", "找到", "打开", "进入", "帮我看", "给我看",
-        "提取", "编辑", "删除", "移除", "清空", "撤回", "删掉", "去掉"
+        "提取", "编辑", "删除", "移除", "清空", "撤回", "删掉", "去掉",
+        "保存", "暂存", "回到", "离开"
     )
     content_queries = ("正文", "内容", "标题", "是什么", "什么", "第", "第一篇", "较早", "最早", "时间更早", "更早")
     if "草稿" in text and any(word in text for word in ("多少", "几", "数量", "有多少", "几篇", "多少篇", "详情", "信息")):
@@ -152,37 +171,33 @@ def _looks_like_destructive_page_task(text: str) -> bool:
 
 
 def classify_intent(user_text: str) -> dict:
-    quick_intent = _fallback_intent(user_text)
-    if quick_intent.get("action") != "chat":
-        return quick_intent
+    exact_intent = _exact_terminal_intent(user_text)
+    if exact_intent:
+        return exact_intent
 
     prompt = f"""
-你是一个终端命令路由器。请把用户输入分类为一个 JSON。
+你是小红书个人账号终端 Agent 的动作选择器。
 
-可选 action：
-- help
-- exit
-- memory
-- workflow_status
-- generate_prompts
-- revise_prompts
-- generate_images
-- plan_note_text
-- create_draft
-- open_page
-- page_state
-- explore_page_task
-- handle_dialogs
-- chat
+你的任务：根据用户输入，从“可用 action 目录”中选择最合适的 action。
+你不是关键词匹配器，必须读懂用户意图和 action 描述。
 
-参数说明：
-- generate_prompts args 可包含 input_image、user_goal、count
-- revise_prompts args 必须包含 revision_instruction
-- explore_page_task args 必须包含 user_goal；如果是删除/移除等高风险页面任务，args.requires_confirmation=true
-- 其他 action args 可为空
+重要原则：
+1. 如果用户是在操作“当前网页/当前草稿/已有帖子/草稿箱”，选择 explore_page_task。
+2. 如果用户说“保存草稿回到首页 / 暂存离开 / 保存当前草稿”，这是对当前网页的操作，必须选择 explore_page_task，不是 create_draft。
+3. create_draft 只用于“从零新建一篇草稿并上传素材填写文案”的完整流程。
+4. 删除、移除、清空、撤回等高风险网页任务也选择 explore_page_task，并设置 args.requires_confirmation=true。
+5. 生成提示词、生成图片、写文案是离线内容生产任务，不是网页操作。
+6. 如果无法确定，但请求看起来依赖当前页面状态，优先选择 explore_page_task。
+7. 只输出一个 JSON 对象，不要 Markdown，不要解释。
 
-只输出 JSON：
-{{"action": "...", "args": {{...}}}}
+可用 action 目录：
+{render_action_catalog()}
+
+输出格式：
+{{
+  "action": "action_name",
+  "args": {{}}
+}}
 
 用户输入：
 {user_text}
@@ -197,11 +212,10 @@ def classify_intent(user_text: str) -> dict:
         )
         parsed = _extract_json(response.choices[0].message.content or "")
         if isinstance(parsed, dict) and parsed.get("action"):
-            parsed.setdefault("args", {})
-            return parsed
+            return _normalize_intent(parsed, user_text)
     except Exception as exc:
-        print(f"意图识别模型暂不可用，使用规则兜底：{exc}")
-    return _fallback_intent(user_text)
+        print(f"意图识别模型暂不可用，使用保守兜底：{exc}")
+    return _normalize_intent(_safe_fallback_intent(user_text), user_text)
 
 
 async def dispatch(skills: XhsAgentSkills, workflow: XhsWorkflow, intent: dict) -> tuple[bool, str]:
@@ -277,8 +291,8 @@ async def dispatch(skills: XhsAgentSkills, workflow: XhsWorkflow, intent: dict) 
         if args.get("requires_confirmation"):
             print("检测到删除/移除类高风险页面任务。")
             print(f"任务内容：{user_goal}")
-            confirmation = input("确认继续请准确输入“确认删除”：").strip()
-            if confirmation != "确认删除":
+            confirmation = input("确认继续？输入 y 继续，输入 n 取消 [y/N]：").strip().lower()
+            if confirmation not in {"y", "yes"}:
                 return True, "用户取消删除/移除类页面任务"
             user_goal = f"{user_goal}。这是用户已确认的删除/移除类任务：先定位目标对象，遇到最终确认弹窗时再点击确认；不要删除不匹配的对象。"
         worklog_hints = workflow.search_experiences(user_goal)

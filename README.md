@@ -185,6 +185,7 @@ python test/test_image_prompt_generation.py
 - `cfg/model_config.py`：文本模型和图片模型的服务商、API Key、base_url、模型名和生成参数配置。
 - `cfg/task.yaml`：小红书发帖任务的任务参数、素材路径、规划规则、正文扩写提示词和兜底文案配置。
 - `cfg/image_task.yaml`：图片生成、看图写 prompt、批量 prompt 策划、视觉提示词模板和格式化提示词模板配置。
+- `cfg/terminal_actions.yaml`：终端 Agent 的 action 目录，配置每个核心能力的说明、适用场景、禁用场景和示例，用于让模型判断用户请求应该调用哪个能力。
 - `test/test_create_draft.py`：创建草稿的端到端测试入口。
 
 ## 常见问题

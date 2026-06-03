@@ -12,6 +12,7 @@ from openai import OpenAI
 from cfg.model_config import MODEL_CONFIG
 from src.core_function.browser_skills import (
     click_by_index,
+    click_text_in_element,
     fill_by_index,
     fill_content_direct,
     fill_title_direct,
@@ -29,7 +30,18 @@ from src.core_function.system_dialog_observer import close_native_dialog_with_es
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EXPLORATION_MEMORY_PATH = PROJECT_ROOT / "agent_memory" / "xhs_exploration_memory.json"
 EXPLORATION_TRACE_PATH = PROJECT_ROOT / "agent_memory" / "xhs_exploration_trace.jsonl"
-VALID_ACTIONS = {"click", "fill", "fill_title", "fill_content", "back", "wait", "extract_answer", "done", "fail"}
+VALID_ACTIONS = {
+    "click",
+    "click_text_in_element",
+    "fill",
+    "fill_title",
+    "fill_content",
+    "back",
+    "wait",
+    "extract_answer",
+    "done",
+    "fail",
+}
 
 
 @dataclass
@@ -78,10 +90,71 @@ def _compact_text(value: str, limit: int = 1200) -> str:
     return value[:limit]
 
 
+def _extract_text_from_value(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts = [_extract_text_from_value(item) for item in value]
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(value, dict):
+        for key in ("text", "content", "reasoning_content"):
+            text = _extract_text_from_value(value.get(key))
+            if text:
+                return text
+    return ""
+
+
+def _extract_response_text(response) -> str:
+    if not getattr(response, "choices", None):
+        return ""
+    message = response.choices[0].message
+    text = _extract_text_from_value(getattr(message, "content", None))
+    if text:
+        return text
+    for attr_name in ("reasoning_content", "text"):
+        text = _extract_text_from_value(getattr(message, attr_name, None))
+        if text:
+            return text
+    if hasattr(message, "model_dump"):
+        dumped = message.model_dump()
+        for key in ("content", "reasoning_content", "text"):
+            text = _extract_text_from_value(dumped.get(key))
+            if text:
+                return text
+    return ""
+
+
+def _debug_response(label: str, response, raw_text: str):
+    finish_reason = "unknown"
+    message_preview = ""
+    if getattr(response, "choices", None):
+        choice = response.choices[0]
+        finish_reason = str(getattr(choice, "finish_reason", "") or "unknown")
+        message = getattr(choice, "message", None)
+        if message is not None and hasattr(message, "model_dump"):
+            try:
+                message_preview = json.dumps(message.model_dump(), ensure_ascii=False)[:800]
+            except Exception:
+                message_preview = repr(message)[:800]
+    print(
+        f"{label} 响应：finish_reason={finish_reason} "
+        f"content_len={len(raw_text or '')} raw={repr((raw_text or '')[:1000])}",
+        flush=True,
+    )
+    if not raw_text:
+        print(f"{label} message_dump预览：{message_preview}", flush=True)
+
+
 def _is_valid_action(action: Any) -> bool:
     if not isinstance(action, dict) or action.get("action") not in VALID_ACTIONS:
         return False
     if action["action"] == "click" and action.get("element_index") is None:
+        return False
+    if action["action"] == "click_text_in_element" and (
+        action.get("element_index") is None or not (action.get("text") or action.get("value"))
+    ):
         return False
     if action["action"] == "fill" and (action.get("element_index") is None or action.get("value") is None):
         return False
@@ -283,6 +356,7 @@ class XhsPageExplorer:
             "browser_state": summarize_browser_state(state),
             "visible_text": _compact_text(dom.get("text", ""), 2600),
             "fields": dom.get("fields", []),
+            "element_count": len(elements),
             "elements": [
                 {
                     "index": item.get("index"),
@@ -290,7 +364,7 @@ class XhsPageExplorer:
                     "text": item.get("text"),
                     "desc": item.get("desc"),
                 }
-                for item in elements[:60]
+                for item in elements[:160]
             ],
         }
         snapshot["page_phase"] = self._classify_page_phase(snapshot)
@@ -313,6 +387,7 @@ class XhsPageExplorer:
 
 你可以选择的动作：
 - click: 点击一个可交互元素，必须给 element_index
+- click_text_in_element: 点击某个元素内部的指定文字，必须给 element_index 和 text；当目标按钮文字在卡片/列表项内部但没有独立元素索引时使用，例如点击第三篇草稿卡片里的“删除”
 - fill: 填写一个输入元素，必须给 element_index 和 value
 - fill_title: 修改当前编辑页标题，必须给 value；当用户明确要修改标题时优先使用
 - fill_content: 修改当前编辑页正文，必须给 value；当用户明确要修改正文时优先使用
@@ -331,17 +406,20 @@ class XhsPageExplorer:
 - 如果用户要修改正文，且当前 page_phase=note_editing，优先使用 fill_content，不要对标题框或页面容器使用 fill。
 - 如果用户目标涉及删除、移除、清空、撤回：必须先定位与用户描述匹配的目标对象；不要删除不匹配对象；如果页面出现二次确认弹窗，只有在目标对象明确匹配时才点击确认。
 - 如果用户要求删除“保存于某个时间”的帖子/草稿/笔记，要把保存时间视为目标对象的唯一定位线索：先找到包含该保存时间的那条记录，再选择该记录对应的删除按钮；如果当前还没看到记录列表，先进入草稿箱/图文笔记列表。
+- 如果某篇草稿/帖子作为一个整体卡片元素出现，且卡片文本里包含“编辑/删除”，但“删除”没有单独元素索引，使用 click_text_in_element，element_index 取目标卡片索引，text 取“删除”。
 - 必须参考“本地行动记忆”。如果里面记录某个动作没有达到目标，不要重复同一路径；如果某个动作暴露了目标线索，优先沿着那个线索继续。
 - 必须参考“来自 xhs_agent_worklog.json 的历史成功经验”中的 user_request、reuse_level、match_score、request_match_ratio、request_overlap_terms、match_ratio 和 overlap_terms。user_request 是当时用户的原始请求；复用前必须先判断它和当前用户目标是否语义一致或高度相关。
 - reuse_level=same_goal_candidate 时，可以把 steps 当作已验证路线优先参考；reuse_level=context_reference_only 或 weak_context_only 时，只能把它当作页面路径/线索，不能照搬最终动作。
 - 如果历史 user_request 只是共享了少量词汇，但目标不同，不要照搬它的步骤；如果语义一致，可以把 steps 当作已验证路线来优先参考。
 - 成功完成后用 done 或 extract_answer，不要继续乱点。
 - 只输出 JSON，不要 Markdown。
+- 严禁输出思考过程、分析文字、解释文字；回复的第一个字符必须是 {{，最后一个字符必须是 }}。
 
 JSON 格式：
 {{
-  "action": "click|fill|fill_title|fill_content|back|wait|extract_answer|done|fail",
+  "action": "click|click_text_in_element|fill|fill_title|fill_content|back|wait|extract_answer|done|fail",
   "element_index": 0,
+  "text": "",
   "value": "",
   "answer": "",
   "reason": "为什么这样做"
@@ -368,6 +446,23 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
 {json.dumps(snapshot, ensure_ascii=False, indent=2)}
 """.strip()
 
+    def _print_snapshot_debug(self, snapshot: dict):
+        print(
+            "页面快照摘要："
+            f"phase={snapshot.get('page_phase')} "
+            f"url={snapshot.get('url')} "
+            f"elements={snapshot.get('element_count', len(snapshot.get('elements') or []))} "
+            f"fields={len(snapshot.get('fields') or [])}",
+            flush=True,
+        )
+        visible_text = _compact_text(snapshot.get("visible_text", ""), 300)
+        if visible_text:
+            print(f"页面可见文本预览：{visible_text}", flush=True)
+        print("当前可交互元素预览（前40个）：", flush=True)
+        for item in (snapshot.get("elements") or [])[:40]:
+            text = _compact_text(item.get("text") or item.get("desc") or "", 120)
+            print(f"  [{item.get('index')}] [{item.get('type')}] {text}", flush=True)
+
     async def _plan_action(
         self,
         user_goal: str,
@@ -384,7 +479,8 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
             max_tokens=MODEL_CONFIG.get("planner_max_tokens", 1000),
             temperature=MODEL_CONFIG.get("planner_temperature", 0.1),
         )
-        raw_text = response.choices[0].message.content or ""
+        raw_text = _extract_response_text(response)
+        _debug_response("页面探索主规划模型", response, raw_text)
         parsed = _extract_json(raw_text)
         if _is_valid_action(parsed):
             return parsed
@@ -424,7 +520,8 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
         )
         retry_prompt = f"""
 你是小红书页面操作决策模型。上一轮模型没有返回可解析动作。
-请根据“压缩页面上下文”自己分析下一步应该做什么，并且只输出一个 JSON 动作，不要解释。
+请在内部根据“压缩页面上下文”分析下一步应该做什么，但最终只输出一个 JSON 动作。
+严禁输出思考过程、分析文字、解释文字；回复的第一个字符必须是 {{，最后一个字符必须是 }}。
 
 用户目标：{user_goal}
 
@@ -438,12 +535,14 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
 - 你必须根据 user_goal、visible_text、fields 和 interactive_elements 自己推理下一步。
 - interactive_elements 中的 index 是真实点击索引；选择 click 时必须使用它。
 - 如果用户要求删除某篇帖子/草稿/笔记，要先根据标题、保存时间、列表顺序等线索定位目标，再选择目标对象对应的删除按钮；如果还没进入列表，先选择能进入列表的入口。
+- 如果目标删除按钮在目标草稿卡片内部但没有独立元素索引，输出 click_text_in_element，element_index 使用目标卡片索引，text 使用“删除”。
 - 如果页面出现删除确认语义，再选择确认/确定类按钮；不要点取消。
 - 如果历史经验 reuse_level 不是 same_goal_candidate，只能参考页面路径，不要照搬最终动作。
 - 不要返回空内容。
 
 合法动作只能是：
 {{"action":"click","element_index":数字,"reason":"..."}}
+{{"action":"click_text_in_element","element_index":数字,"text":"删除","reason":"..."}}
 {{"action":"fill","element_index":数字,"value":"...","reason":"..."}}
 {{"action":"fill_title","value":"...","reason":"..."}}
 {{"action":"fill_content","value":"...","reason":"..."}}
@@ -463,7 +562,8 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
         except Exception as exc:
             print(f"页面探索短提示重试失败：{exc}")
             return None
-        retry_raw = response.choices[0].message.content or ""
+        retry_raw = _extract_response_text(response)
+        _debug_response("页面探索短提示模型", response, retry_raw)
         retry_parsed = _extract_json(retry_raw)
         if not _is_valid_action(retry_parsed):
             print(f"页面探索短提示重试仍不可解析。返回预览：{_compact_text(retry_raw, 300)}")
@@ -490,9 +590,11 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
 
 请根据用户目标、压缩页面上下文和上一轮原始输出，重新给出一个合法动作。
 只输出一个 JSON 对象，不要 Markdown，不要解释。
+严禁输出思考过程、分析文字、解释文字；回复的第一个字符必须是 {{，最后一个字符必须是 }}。
 
 合法动作：
 {{"action":"click","element_index":0,"reason":"..."}}
+{{"action":"click_text_in_element","element_index":0,"text":"删除","reason":"..."}}
 {{"action":"fill","element_index":0,"value":"...","reason":"..."}}
 {{"action":"fill_title","value":"...","reason":"..."}}
 {{"action":"fill_content","value":"...","reason":"..."}}
@@ -525,6 +627,7 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
 - 你必须自己分析 user_goal 与 interactive_elements 的关系。
 - click 动作必须使用 interactive_elements 里真实存在的 index。
 - 用户要求删除具体帖子/草稿时，应根据标题、保存时间、列表顺序等线索定位目标，再选择目标对象对应的删除按钮；如果还没进入列表，先选择能进入列表的入口。
+- 如果目标删除按钮在目标草稿卡片内部但没有独立元素索引，输出 click_text_in_element，element_index 使用目标卡片索引，text 使用“删除”。
 - 不要返回空内容。
 
 上一轮原始输出：
@@ -540,7 +643,12 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
         except Exception as exc:
             print(f"动作修复模型调用失败：{exc}")
             return None
-        return _extract_json(response.choices[0].message.content or "")
+        repair_raw = _extract_response_text(response)
+        _debug_response("页面探索动作修复模型", response, repair_raw)
+        repaired = _extract_json(repair_raw)
+        if not _is_valid_action(repaired):
+            print(f"动作修复模型仍不可解析。返回预览：{_compact_text(repair_raw, 500)}", flush=True)
+        return repaired
 
     def _snapshot_brief(self, snapshot: dict) -> dict:
         return {
@@ -712,6 +820,7 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
 
             elements = await extract_interactive_elements(page, max_retries=1)
             snapshot = await self._page_snapshot(page, elements, state)
+            self._print_snapshot_debug(snapshot)
             action = await self._plan_action(user_goal, snapshot, history, memory_hits, trace_notes, worklog_hints)
             action_name = action.get("action")
             reason = action.get("reason", "")
@@ -733,7 +842,10 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
             before_snapshot = snapshot
             result = ""
             element_text = ""
-            action_key = f"{action_name}:{action.get('element_index')}:{action.get('value', '')[:40]}"
+            action_key = (
+                f"{action_name}:{action.get('element_index')}:"
+                f"{action.get('text', '')[:40]}:{action.get('value', '')[:40]}"
+            )
 
             try:
                 if action_name == "click":
@@ -745,6 +857,16 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
                         element_text = element.get("text") or element.get("desc") or ""
                         await click_by_index(page, int(index), elements)
                         result = f"已点击 {element_text}"
+                elif action_name == "click_text_in_element":
+                    index = action.get("element_index")
+                    target_text = action.get("text") or action.get("value") or ""
+                    if index is None or int(index) >= len(elements):
+                        result = "内部文本点击索引无效"
+                    else:
+                        element = elements[int(index)]
+                        element_text = element.get("text") or element.get("desc") or ""
+                        await click_text_in_element(page, int(index), target_text, elements)
+                        result = f"已点击 {element_text} 内部文本：{target_text}"
                 elif action_name == "fill_title":
                     value = action.get("value", "")
                     element_text = "标题输入框"

@@ -57,6 +57,97 @@ async def click_by_index(page, index, elements_cache):
             print(f"稳定选择器点击失败，改用文本点击：{first_error}")
             await page.get_by_text(text, exact=False).first.click(timeout=10000)
 
+
+async def click_text_in_element(page, index, text, elements_cache):
+    """
+    点击某个已提取元素内部的指定文本。
+
+    用于列表卡片这类场景：卡片整体被提取为一个元素，但“删除/编辑”等文字按钮
+    没有被单独提取成元素。Agent 可以表达：
+    {"action": "click_text_in_element", "element_index": 42, "text": "删除"}
+    """
+    if not elements_cache:
+        raise Exception("元素列表为空，无法执行内部文本点击")
+    if index < 0 or index >= len(elements_cache):
+        raise Exception(f"索引 {index} 超出范围（列表长度 {len(elements_cache)}）")
+    if not text or not str(text).strip():
+        raise Exception("内部点击文本不能为空")
+
+    element = elements_cache[index]
+    locator = _locator_for_element(page, element)
+    target_text = str(text).strip()
+    print(f"即将在元素 [{index}] 内点击文本: {target_text}")
+
+    point = await locator.evaluate(
+        """(root, targetText) => {
+            const normalize = text => (text || '').replace(/\\s+/g, ' ').trim();
+            const visible = el => {
+                if (!el || !el.getBoundingClientRect) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden'
+                    && style.opacity !== '0';
+            };
+
+            root.scrollIntoView({block: 'center', inline: 'center'});
+
+            const descendants = Array.from(root.querySelectorAll('*'))
+                .filter(visible)
+                .map(el => ({el, text: normalize(el.innerText || el.textContent)}))
+                .filter(item => item.text && item.text.includes(targetText))
+                .sort((a, b) => {
+                    const aExact = a.text === targetText ? 1 : 0;
+                    const bExact = b.text === targetText ? 1 : 0;
+                    if (aExact !== bExact) return bExact - aExact;
+                    return a.text.length - b.text.length;
+                });
+
+            if (descendants.length) {
+                const el = descendants[0].el;
+                const rect = el.getBoundingClientRect();
+                return {
+                    x: rect.left + rect.width / 2,
+                    y: rect.top + rect.height / 2,
+                    mode: 'descendant',
+                    matchedText: descendants[0].text
+                };
+            }
+
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            while (walker.nextNode()) {
+                const node = walker.currentNode;
+                const value = node.nodeValue || '';
+                const start = value.indexOf(targetText);
+                if (start < 0) continue;
+                const range = document.createRange();
+                range.setStart(node, start);
+                range.setEnd(node, start + targetText.length);
+                const rects = Array.from(range.getClientRects())
+                    .filter(rect => rect.width > 0 && rect.height > 0);
+                range.detach();
+                if (rects.length) {
+                    const rect = rects[0];
+                    return {
+                        x: rect.left + rect.width / 2,
+                        y: rect.top + rect.height / 2,
+                        mode: 'text-range',
+                        matchedText: targetText
+                    };
+                }
+            }
+
+            return null;
+        }""",
+        target_text,
+    )
+    if not point:
+        raise Exception(f"元素 [{index}] 内未找到可点击文本：{target_text}")
+    await page.mouse.click(point["x"], point["y"])
+    print(f"已点击元素 [{index}] 内文本：{point.get('matchedText')} mode={point.get('mode')}")
+
+
 async def fill_by_index(page, index, value, elements_cache):
     """
     根据索引填充输入框或 contenteditable。

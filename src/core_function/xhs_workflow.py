@@ -1,4 +1,6 @@
 import json
+import queue
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -44,36 +46,56 @@ class XhsWorkflow:
         self.worklog_path = worklog_path
         self.tasks: list[WorkItem] = []
         self.experiences: list[WorkExperience] = []
+        self.memorized_requests: list[str] = []
         self.current_task: WorkItem | None = None
+        self._lock = threading.RLock()
+        self._memory_review_queue: queue.Queue[tuple[WorkExperience, list[str]]] = queue.Queue()
+        self._memory_review_thread = threading.Thread(
+            target=self._memory_review_loop,
+            name="xhs-memory-review",
+            daemon=True,
+        )
+        self._memory_review_thread.start()
         self.load()
 
     def load(self):
-        if not self.worklog_path.exists():
-            return
-        try:
-            data = json.loads(self.worklog_path.read_text(encoding="utf-8"))
-        except Exception:
-            return
-        self.tasks = []
-        for item in data.get("tasks", []):
-            if item.get("status") != "completed":
-                continue
-            steps = [WorkStep(**step) for step in item.get("steps", [])]
-            item["steps"] = steps
-            self.tasks.append(WorkItem(**item))
-        self.experiences = []
-        for item in data.get("experiences", []):
-            self.experiences.append(WorkExperience(**item))
-        self.current_task = self.tasks[-1] if self.tasks else None
+        with self._lock:
+            if not self.worklog_path.exists():
+                return
+            try:
+                data = json.loads(self.worklog_path.read_text(encoding="utf-8"))
+            except Exception:
+                return
+            self.tasks = []
+            for item in data.get("tasks", []):
+                if item.get("status") != "completed":
+                    continue
+                steps = [WorkStep(**step) for step in item.get("steps", [])]
+                item["steps"] = steps
+                self.tasks.append(WorkItem(**item))
+            self.experiences = []
+            for item in data.get("experiences", []):
+                self.experiences.append(WorkExperience(**item))
+            stored_requests = [
+                str(request).strip()
+                for request in data.get("memorized_requests", [])
+                if str(request).strip()
+            ]
+            if not stored_requests:
+                stored_requests = [item.user_request for item in self.experiences if item.user_request]
+            self.memorized_requests = list(dict.fromkeys(stored_requests))
+            self.current_task = self.tasks[-1] if self.tasks else None
 
     def save(self):
-        self.worklog_path.parent.mkdir(parents=True, exist_ok=True)
-        completed_tasks = [task for task in self.tasks if task.status == "completed"]
-        data = {
-            "tasks": [asdict(task) for task in completed_tasks[-50:]],
-            "experiences": [asdict(item) for item in self.experiences[-120:]],
-        }
-        self.worklog_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._lock:
+            self.worklog_path.parent.mkdir(parents=True, exist_ok=True)
+            completed_tasks = [task for task in self.tasks if task.status == "completed"]
+            data = {
+                "tasks": [asdict(task) for task in completed_tasks[-50:]],
+                "memorized_requests": self.memorized_requests[-300:],
+                "experiences": [asdict(item) for item in self.experiences[-120:]],
+            }
+            self.worklog_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def start(self, user_request: str, intent: dict) -> WorkItem:
         action = intent.get("action", "chat")
@@ -125,7 +147,7 @@ class XhsWorkflow:
                 tokens.add(cleaned[index : index + 2])
         return tokens
 
-    def remember_experience(self, user_request: str, result: str, raw_steps: list[dict] | None):
+    def _build_experience(self, user_request: str, result: str, raw_steps: list[dict] | None) -> WorkExperience:
         raw_steps = raw_steps or []
         cleaned_steps = []
         summary_lines = []
@@ -144,15 +166,147 @@ class XhsWorkflow:
                 summary_lines.append(f"{index}. {useful_text}")
 
         summary = "\n".join(summary_lines[-12:]) or str(result)[:500]
-        self.experiences.append(
-            WorkExperience(
-                user_request=user_request,
-                result=str(result)[:1000],
-                summary=summary[:2500],
-                steps=cleaned_steps[-20:],
-            )
+        return WorkExperience(
+            user_request=user_request,
+            result=str(result)[:1000],
+            summary=summary[:2500],
+            steps=cleaned_steps[-20:],
         )
-        self.save()
+
+    def _local_duplicate_request(self, user_request: str, existing_requests: list[str]) -> str:
+        normalized = "".join((user_request or "").split()).lower()
+        if not normalized:
+            return ""
+        for existing in existing_requests:
+            existing_normalized = "".join((existing or "").split()).lower()
+            if existing_normalized == normalized:
+                return existing
+        query_tokens = self._tokens(user_request)
+        for existing in existing_requests:
+            existing_tokens = self._tokens(existing)
+            overlap = query_tokens & existing_tokens
+            ratio = len(overlap) / max(1, len(query_tokens))
+            if ratio >= 0.75 and len(overlap) >= 3:
+                return existing
+        return ""
+
+    def _ask_memory_agent_should_add(self, user_request: str, existing_requests: list[str]) -> dict:
+        local_duplicate = self._local_duplicate_request(user_request, existing_requests)
+        if local_duplicate:
+            return {
+                "should_add": False,
+                "duplicate_request": local_duplicate,
+                "reason": "本地规则判断为重复请求。",
+            }
+
+        try:
+            from openai import OpenAI
+
+            from cfg.model_config import MODEL_CONFIG
+        except Exception as exc:
+            return {
+                "should_add": True,
+                "duplicate_request": "",
+                "reason": f"记忆审核模型不可用，使用本地非重复判断：{exc}",
+            }
+
+        prompt = f"""
+你是小红书 Agent 的长期记忆审核器。
+
+任务：
+判断“当前成功请求”是否应该作为一条新的长期记忆写入。
+
+判断标准：
+- 如果当前请求和已有请求语义相同、只是措辞不同、标点不同、数量表达不同，should_add=false。
+- 如果当前请求是已有请求的明显重复执行，也 should_add=false。
+- 如果当前请求目标不同、操作对象不同、成功路径可能不同，should_add=true。
+- 只比较请求语义，不要根据步骤判断。
+
+已有长期记忆请求列表：
+{json.dumps(existing_requests, ensure_ascii=False, indent=2)}
+
+当前成功请求：
+{user_request}
+
+只输出 JSON：
+{{
+  "should_add": true,
+  "duplicate_request": "",
+  "reason": "简短说明"
+}}
+""".strip()
+        try:
+            client = OpenAI(
+                api_key=MODEL_CONFIG["api_key"],
+                base_url=MODEL_CONFIG["base_url"],
+                timeout=MODEL_CONFIG.get("timeout", 30),
+            )
+            response = client.chat.completions.create(
+                model=MODEL_CONFIG.get("formatter_model") or MODEL_CONFIG.get("content_model"),
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500,
+                temperature=MODEL_CONFIG.get("formatter_temperature", 0.1),
+            )
+            raw_text = response.choices[0].message.content or ""
+            start = raw_text.find("{")
+            end = raw_text.rfind("}") + 1
+            parsed = json.loads(raw_text[start:end]) if start >= 0 and end > start else {}
+            if isinstance(parsed, dict) and "should_add" in parsed:
+                return {
+                    "should_add": bool(parsed.get("should_add")),
+                    "duplicate_request": str(parsed.get("duplicate_request") or ""),
+                    "reason": str(parsed.get("reason") or ""),
+                }
+        except Exception as exc:
+            return {
+                "should_add": True,
+                "duplicate_request": "",
+                "reason": f"记忆审核模型调用失败，使用本地非重复判断：{exc}",
+            }
+
+        return {
+            "should_add": True,
+            "duplicate_request": "",
+            "reason": "记忆审核模型返回不可解析，使用本地非重复判断。",
+        }
+
+    def _memory_review_worker(self, experience: WorkExperience, existing_requests: list[str]):
+        decision = self._ask_memory_agent_should_add(experience.user_request, existing_requests)
+        if not decision.get("should_add"):
+            duplicate = decision.get("duplicate_request") or "未知重复请求"
+            print(
+                "长期记忆审核：本次成功请求与已有请求重复，未写入完整步骤。"
+                f"重复请求：{duplicate}；原因：{decision.get('reason', '')}"
+            )
+            return
+
+        with self._lock:
+            duplicate = self._local_duplicate_request(experience.user_request, self.memorized_requests)
+            if duplicate:
+                print(f"长期记忆审核：写入前发现重复请求，已跳过。重复请求：{duplicate}")
+                return
+            self.experiences.append(experience)
+            self.memorized_requests.append(experience.user_request)
+            self.memorized_requests = list(dict.fromkeys(self.memorized_requests))[-300:]
+            print(f"长期记忆审核：已写入新经验：{experience.user_request}")
+            self.save()
+
+    def _memory_review_loop(self):
+        while True:
+            experience, existing_requests = self._memory_review_queue.get()
+            try:
+                self._memory_review_worker(experience, existing_requests)
+            except Exception as exc:
+                print(f"长期记忆审核线程异常，已跳过本次写入：{exc}")
+            finally:
+                self._memory_review_queue.task_done()
+
+    def remember_experience(self, user_request: str, result: str, raw_steps: list[dict] | None):
+        experience = self._build_experience(user_request, result, raw_steps)
+        with self._lock:
+            existing_requests = list(self.memorized_requests)
+        self._memory_review_queue.put((experience, existing_requests))
+        print("长期记忆审核：已提交后台队列，不阻塞当前任务。")
 
     def search_experiences(self, user_request: str, limit: int = 3) -> list[dict]:
         query_tokens = self._tokens(user_request)
