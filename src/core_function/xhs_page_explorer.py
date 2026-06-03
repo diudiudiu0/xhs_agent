@@ -12,6 +12,8 @@ from openai import OpenAI
 from cfg.model_config import MODEL_CONFIG
 from src.core_function.browser_skills import (
     click_by_index,
+    click_save_and_leave,
+    click_semantic_target,
     click_text_in_element,
     fill_by_index,
     fill_content_direct,
@@ -32,10 +34,12 @@ EXPLORATION_MEMORY_PATH = PROJECT_ROOT / "agent_memory" / "xhs_exploration_memor
 EXPLORATION_TRACE_PATH = PROJECT_ROOT / "agent_memory" / "xhs_exploration_trace.jsonl"
 VALID_ACTIONS = {
     "click",
+    "click_semantic_target",
     "click_text_in_element",
     "fill",
     "fill_title",
     "fill_content",
+    "save_and_leave",
     "back",
     "wait",
     "extract_answer",
@@ -151,6 +155,8 @@ def _is_valid_action(action: Any) -> bool:
     if not isinstance(action, dict) or action.get("action") not in VALID_ACTIONS:
         return False
     if action["action"] == "click" and action.get("element_index") is None:
+        return False
+    if action["action"] == "click_semantic_target" and not (action.get("text") or action.get("value")):
         return False
     if action["action"] == "click_text_in_element" and (
         action.get("element_index") is None or not (action.get("text") or action.get("value"))
@@ -309,7 +315,11 @@ class XhsPageExplorer:
             f"{field.get('hint', '')} {field.get('value', '')}"
             for field in fields
         )
-        combined = f"{url} {text} {field_hints}"
+        semantic_hints = " ".join(
+            f"{item.get('text', '')} {item.get('attrs', '')} {item.get('tag', '')}"
+            for item in (snapshot.get("semantic_targets") or [])
+        )
+        combined = f"{url} {text} {field_hints} {semantic_hints}"
 
         if "标题" in combined and ("正文" in combined or "发布" in combined or "暂存离开" in combined):
             return "note_editing"
@@ -329,6 +339,96 @@ class XhsPageExplorer:
         dom = await page.evaluate(
             """() => {
                 const text = (document.body?.innerText || '').replace(/\\s+/g, ' ').trim();
+                const semanticAttrNames = [
+                    'aria-label',
+                    'title',
+                    'data-text',
+                    'data-title',
+                    'data-name',
+                    'data-label',
+                    'save-text',
+                    'submit-text',
+                    'cancel-text',
+                    'confirm-text',
+                    'delete-text'
+                ];
+                const semanticSelector = [
+                    'button',
+                    'a',
+                    '[role="button"]',
+                    '[role="link"]',
+                    '[onclick]',
+                    '[tabindex]',
+                    '[class*="btn"]',
+                    '[class*="Btn"]',
+                    '[class*="button"]',
+                    '[class*="Button"]',
+                    'xhs-publish-btn',
+                    '[save-text]',
+                    '[submit-text]',
+                    '[cancel-text]',
+                    '[confirm-text]',
+                    '[delete-text]',
+                    '[aria-label]',
+                    '[title]',
+                    '[data-text]',
+                    '[data-title]'
+                ].join(',');
+                const normalize = value => (value || '').replace(/\\s+/g, ' ').trim();
+                const visible = (el, allowAttributeOnly = false) => {
+                    if (!el || !el.getBoundingClientRect) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    const rendered = style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && style.opacity !== '0';
+                    if (!rendered) return false;
+                    return rect.width > 0 && rect.height > 0 || allowAttributeOnly;
+                };
+                const attrText = el => semanticAttrNames
+                    .map(name => el.getAttribute && el.getAttribute(name))
+                    .filter(Boolean)
+                    .map(normalize)
+                    .join(' ');
+                const collectSemanticNodes = root => {
+                    const nodes = [];
+                    const seen = new Set();
+                    const visit = node => {
+                        if (!node || !node.querySelectorAll) return;
+                        for (const el of node.querySelectorAll(semanticSelector)) {
+                            if (!seen.has(el)) {
+                                seen.add(el);
+                                nodes.push(el);
+                            }
+                        }
+                        for (const el of node.querySelectorAll('*')) {
+                            if (el.shadowRoot) visit(el.shadowRoot);
+                        }
+                    };
+                    visit(root);
+                    return nodes;
+                };
+                const semanticTargets = collectSemanticNodes(document)
+                    .filter(el => visible(el, Boolean(attrText(el))))
+                    .map(el => {
+                        const attrs = normalize(attrText(el));
+                        const inner = normalize(el.innerText || el.textContent);
+                        const textParts = [attrs, inner].filter(Boolean);
+                        return {
+                            tag: el.tagName.toLowerCase(),
+                            text: textParts.join(' | ').slice(0, 180),
+                            attrs: attrs.slice(0, 180),
+                            inner_text: inner.slice(0, 180),
+                            role: el.getAttribute('role') || '',
+                            class_name: String(el.className || '').slice(0, 120)
+                        };
+                    })
+                    .filter(item => item.text)
+                    .filter((item, index, array) => {
+                        const key = `${item.tag}:${item.text}`;
+                        return array.findIndex(other => `${other.tag}:${other.text}` === key) === index;
+                    })
+                    .slice(0, 80);
                 const fields = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"], [role="textbox"]'))
                     .filter(el => {
                         const rect = el.getBoundingClientRect();
@@ -348,7 +448,7 @@ class XhsPageExplorer:
                         value: (el.value || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 1200)
                     }))
                     .slice(0, 20);
-                return {text, fields};
+                return {text, fields, semanticTargets};
             }"""
         )
         snapshot = {
@@ -356,6 +456,7 @@ class XhsPageExplorer:
             "browser_state": summarize_browser_state(state),
             "visible_text": _compact_text(dom.get("text", ""), 2600),
             "fields": dom.get("fields", []),
+            "semantic_targets": dom.get("semanticTargets", []),
             "element_count": len(elements),
             "elements": [
                 {
@@ -387,14 +488,16 @@ class XhsPageExplorer:
 
 你可以选择的动作：
 - click: 点击一个可交互元素，必须给 element_index
+- click_semantic_target: 按目标文字/语义深度点击，不需要 element_index；当按钮文字可能藏在 semantic_targets、自定义组件属性、Shadow DOM、固定底部工具条或没有被元素提取器列出时使用，必须由你自己填写 text，可选 intent 和 avoid_texts
 - click_text_in_element: 点击某个元素内部的指定文字，必须给 element_index 和 text；当目标按钮文字在卡片/列表项内部但没有独立元素索引时使用，例如点击第三篇草稿卡片里的“删除”
 - fill: 填写一个输入元素，必须给 element_index 和 value
 - fill_title: 修改当前编辑页标题，必须给 value；当用户明确要修改标题时优先使用
 - fill_content: 修改当前编辑页正文，必须给 value；当用户明确要修改正文时优先使用
+- save_and_leave: 保存当前草稿并暂存离开；当用户要求“保存草稿/暂存离开/存草稿/保存并回到首页”，且当前是笔记编辑页时使用；不需要 element_index
 - back: 返回上一页
 - wait: 等待页面加载或响应
-- extract_answer: 当前页面已经包含用户要的信息，提取并返回 answer
-- done: 任务已完成，返回 answer
+- extract_answer: 当前页面已经包含用户要的信息，提取并返回 answer；这类完成动作必须同时返回 next_suggestion
+- done: 任务已完成，返回 answer；这类完成动作必须同时返回 next_suggestion
 - fail: 多次探索仍无法完成，说明原因
 
 行为规则：
@@ -404,24 +507,41 @@ class XhsPageExplorer:
 - 如果用户要正文内容，打开目标草稿后优先从正文编辑框、contenteditable 或页面字段中提取。
 - 如果用户要修改标题，且当前 page_phase=note_editing，优先使用 fill_title，不要对侧边栏或页面容器使用 fill。
 - 如果用户要修改正文，且当前 page_phase=note_editing，优先使用 fill_content，不要对标题框或页面容器使用 fill。
+- 如果用户要保存当前草稿、暂存离开、保存并回到首页，且当前 page_phase=note_editing，优先返回 save_and_leave。不要因为可交互元素列表里没有“暂存离开”就输出分析文字或 fail；这个按钮由专用工具处理。
+- save_and_leave 是保存草稿，不是正式发布；requires_user_confirmation 通常为 false。除非页面显示会覆盖/删除内容，否则不要要求用户确认。
+- 如果目标按钮在可交互元素列表中不可见，但 visible_text、semantic_targets、组件属性或用户目标明确存在该操作，可以使用 click_semantic_target。text 必须由你根据当前页面感知自行填写，不要要求用户提供。例如 semantic_targets 里出现 save-text="暂存离开" 时，可以返回 text="暂存离开" intent="save_draft" avoid_texts=["发布","立即发布"]。
+- 如果 semantic_targets 中有多个相近按钮文本，必须结合用户目标选择最贴近的 text，并用 avoid_texts 排除危险或相反语义文本，例如保存草稿时排除“发布”，删除确认时排除“取消”。
+- click_semantic_target 是通用深度点击工具，不是自动兜底；只有你明确判断需要点击该语义目标时才使用。
 - 如果用户目标涉及删除、移除、清空、撤回：必须先定位与用户描述匹配的目标对象；不要删除不匹配对象；如果页面出现二次确认弹窗，只有在目标对象明确匹配时才点击确认。
 - 如果用户要求删除“保存于某个时间”的帖子/草稿/笔记，要把保存时间视为目标对象的唯一定位线索：先找到包含该保存时间的那条记录，再选择该记录对应的删除按钮；如果当前还没看到记录列表，先进入草稿箱/图文笔记列表。
 - 如果某篇草稿/帖子作为一个整体卡片元素出现，且卡片文本里包含“编辑/删除”，但“删除”没有单独元素索引，使用 click_text_in_element，element_index 取目标卡片索引，text 取“删除”。
+- 你必须为每个动作判断是否需要用户确认，并返回 requires_user_confirmation。
+- 当动作会删除、移除、清空、撤回、发布、确认删除、覆盖重要内容或造成不可逆影响时，requires_user_confirmation 必须为 true，并写清 confirmation_message。
+- 普通查看、进入页面、打开草稿箱、切换 tab、读取信息、无风险等待等动作，requires_user_confirmation 应为 false。
+- 程序会根据 requires_user_confirmation 询问用户 y/n；用户拒绝时不会执行该动作。
 - 必须参考“本地行动记忆”。如果里面记录某个动作没有达到目标，不要重复同一路径；如果某个动作暴露了目标线索，优先沿着那个线索继续。
 - 必须参考“来自 xhs_agent_worklog.json 的历史成功经验”中的 user_request、reuse_level、match_score、request_match_ratio、request_overlap_terms、match_ratio 和 overlap_terms。user_request 是当时用户的原始请求；复用前必须先判断它和当前用户目标是否语义一致或高度相关。
 - reuse_level=same_goal_candidate 时，可以把 steps 当作已验证路线优先参考；reuse_level=context_reference_only 或 weak_context_only 时，只能把它当作页面路径/线索，不能照搬最终动作。
 - 如果历史 user_request 只是共享了少量词汇，但目标不同，不要照搬它的步骤；如果语义一致，可以把 steps 当作已验证路线来优先参考。
 - 成功完成后用 done 或 extract_answer，不要继续乱点。
+- 只有当 action 是 done 或 extract_answer 时，才返回 next_suggestion；next_suggestion 要根据当前页面信息、用户目标和任务结果，给用户一个自然、具体、可继续交流的下一步建议。
+- 其他中间探索动作的 next_suggestion 必须为空字符串。
 - 只输出 JSON，不要 Markdown。
 - 严禁输出思考过程、分析文字、解释文字；回复的第一个字符必须是 {{，最后一个字符必须是 }}。
 
 JSON 格式：
 {{
-  "action": "click|click_text_in_element|fill|fill_title|fill_content|back|wait|extract_answer|done|fail",
+  "action": "click|click_semantic_target|click_text_in_element|fill|fill_title|fill_content|save_and_leave|back|wait|extract_answer|done|fail",
   "element_index": 0,
   "text": "",
+  "intent": "",
+  "avoid_texts": [],
+  "event_names": [],
   "value": "",
   "answer": "",
+  "next_suggestion": "",
+  "requires_user_confirmation": false,
+  "confirmation_message": "",
   "reason": "为什么这样做"
 }}
 
@@ -458,6 +578,12 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
         visible_text = _compact_text(snapshot.get("visible_text", ""), 300)
         if visible_text:
             print(f"页面可见文本预览：{visible_text}", flush=True)
+        semantic_targets = snapshot.get("semantic_targets") or []
+        if semantic_targets:
+            print("页面语义目标预览（前20个）：", flush=True)
+            for item in semantic_targets[:20]:
+                text = _compact_text(item.get("text") or item.get("attrs") or "", 120)
+                print(f"  [{item.get('tag')}] {text}", flush=True)
         print("当前可交互元素预览（前40个）：", flush=True)
         for item in (snapshot.get("elements") or [])[:40]:
             text = _compact_text(item.get("text") or item.get("desc") or "", 120)
@@ -485,170 +611,13 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
         if _is_valid_action(parsed):
             return parsed
 
-        retry_action = await self._retry_plan_action(user_goal, snapshot, history, trace_notes, worklog_hints, raw_text)
-        if _is_valid_action(retry_action):
-            return retry_action
-
-        print(f"页面探索模型返回不可解析，尝试修复。原始返回预览：{_compact_text(raw_text, 500)}")
-        repaired = await self._repair_action(user_goal, snapshot, history, trace_notes, worklog_hints, raw_text)
-        if _is_valid_action(repaired):
-            return repaired
-
         return {
             "action": "fail",
             "reason": (
-                "页面探索模型和动作修复模型都没有返回合法动作。"
+                "页面探索模型没有返回合法动作。"
                 f"原始返回预览：{_compact_text(raw_text, 300)}"
             ),
         }
-
-    async def _retry_plan_action(
-        self,
-        user_goal: str,
-        snapshot: dict,
-        history: list[ExplorationStep],
-        trace_notes: list[dict],
-        worklog_hints: list[dict],
-        raw_text: str,
-    ) -> dict | None:
-        compact_context = self._compact_action_context(
-            user_goal=user_goal,
-            snapshot=snapshot,
-            history=history,
-            trace_notes=trace_notes,
-            worklog_hints=worklog_hints,
-        )
-        retry_prompt = f"""
-你是小红书页面操作决策模型。上一轮模型没有返回可解析动作。
-请在内部根据“压缩页面上下文”分析下一步应该做什么，但最终只输出一个 JSON 动作。
-严禁输出思考过程、分析文字、解释文字；回复的第一个字符必须是 {{，最后一个字符必须是 }}。
-
-用户目标：{user_goal}
-
-上一轮模型输出不可解析：
-{_compact_text(raw_text, 300) or "<empty>"}
-
-压缩页面上下文：
-{compact_context}
-
-决策要求：
-- 你必须根据 user_goal、visible_text、fields 和 interactive_elements 自己推理下一步。
-- interactive_elements 中的 index 是真实点击索引；选择 click 时必须使用它。
-- 如果用户要求删除某篇帖子/草稿/笔记，要先根据标题、保存时间、列表顺序等线索定位目标，再选择目标对象对应的删除按钮；如果还没进入列表，先选择能进入列表的入口。
-- 如果目标删除按钮在目标草稿卡片内部但没有独立元素索引，输出 click_text_in_element，element_index 使用目标卡片索引，text 使用“删除”。
-- 如果页面出现删除确认语义，再选择确认/确定类按钮；不要点取消。
-- 如果历史经验 reuse_level 不是 same_goal_candidate，只能参考页面路径，不要照搬最终动作。
-- 不要返回空内容。
-
-合法动作只能是：
-{{"action":"click","element_index":数字,"reason":"..."}}
-{{"action":"click_text_in_element","element_index":数字,"text":"删除","reason":"..."}}
-{{"action":"fill","element_index":数字,"value":"...","reason":"..."}}
-{{"action":"fill_title","value":"...","reason":"..."}}
-{{"action":"fill_content","value":"...","reason":"..."}}
-{{"action":"done","answer":"...","reason":"..."}}
-{{"action":"back","reason":"..."}}
-{{"action":"wait","seconds":1.5,"reason":"..."}}
-{{"action":"extract_answer","answer":"...","reason":"..."}}
-{{"action":"fail","reason":"..."}}
-""".strip()
-        try:
-            response = _client().chat.completions.create(
-                model=MODEL_CONFIG.get("planner_model", MODEL_CONFIG.get("content_model")),
-                messages=[{"role": "user", "content": retry_prompt}],
-                max_tokens=350,
-                temperature=MODEL_CONFIG.get("planner_temperature", 0.1),
-            )
-        except Exception as exc:
-            print(f"页面探索短提示重试失败：{exc}")
-            return None
-        retry_raw = _extract_response_text(response)
-        _debug_response("页面探索短提示模型", response, retry_raw)
-        retry_parsed = _extract_json(retry_raw)
-        if not _is_valid_action(retry_parsed):
-            print(f"页面探索短提示重试仍不可解析。返回预览：{_compact_text(retry_raw, 300)}")
-        return retry_parsed
-
-    async def _repair_action(
-        self,
-        user_goal: str,
-        snapshot: dict,
-        history: list[ExplorationStep],
-        trace_notes: list[dict],
-        worklog_hints: list[dict],
-        raw_text: str,
-    ) -> dict | None:
-        compact_context = self._compact_action_context(
-            user_goal=user_goal,
-            snapshot=snapshot,
-            history=history,
-            trace_notes=trace_notes,
-            worklog_hints=worklog_hints,
-        )
-        repair_prompt = f"""
-你是 JSON 动作修复器。上一轮页面探索模型的输出无法被程序解析。
-
-请根据用户目标、压缩页面上下文和上一轮原始输出，重新给出一个合法动作。
-只输出一个 JSON 对象，不要 Markdown，不要解释。
-严禁输出思考过程、分析文字、解释文字；回复的第一个字符必须是 {{，最后一个字符必须是 }}。
-
-合法动作：
-{{"action":"click","element_index":0,"reason":"..."}}
-{{"action":"click_text_in_element","element_index":0,"text":"删除","reason":"..."}}
-{{"action":"fill","element_index":0,"value":"...","reason":"..."}}
-{{"action":"fill_title","value":"...","reason":"..."}}
-{{"action":"fill_content","value":"...","reason":"..."}}
-{{"action":"back","reason":"..."}}
-{{"action":"wait","seconds":1.5,"reason":"..."}}
-{{"action":"extract_answer","answer":"...","reason":"..."}}
-{{"action":"done","answer":"...","reason":"..."}}
-{{"action":"fail","reason":"..."}}
-
-用户目标：{user_goal}
-
-历史动作：
-{json.dumps([asdict(step) for step in history[-5:]], ensure_ascii=False, indent=2)}
-
-本轮已尝试路径摘要：
-{json.dumps(self._history_lessons(history), ensure_ascii=False, indent=2)}
-
-本地行动记忆：
-{json.dumps(trace_notes[-12:], ensure_ascii=False, indent=2)}
-
-来自 xhs_agent_worklog.json 的历史成功经验：
-{json.dumps(worklog_hints[-6:], ensure_ascii=False, indent=2)}
-历史成功经验里的 user_request 是当时用户原始请求。必须先判断 user_request 与当前用户目标是否语义一致或高度相关；如果只是词汇重合但目标不同，不要复用。
-reuse_level=same_goal_candidate 才表示可能是同类任务；context_reference_only/weak_context_only 只能作为页面路径线索。
-
-压缩页面上下文：
-{compact_context}
-
-额外要求：
-- 你必须自己分析 user_goal 与 interactive_elements 的关系。
-- click 动作必须使用 interactive_elements 里真实存在的 index。
-- 用户要求删除具体帖子/草稿时，应根据标题、保存时间、列表顺序等线索定位目标，再选择目标对象对应的删除按钮；如果还没进入列表，先选择能进入列表的入口。
-- 如果目标删除按钮在目标草稿卡片内部但没有独立元素索引，输出 click_text_in_element，element_index 使用目标卡片索引，text 使用“删除”。
-- 不要返回空内容。
-
-上一轮原始输出：
-{raw_text}
-""".strip()
-        try:
-            response = _client().chat.completions.create(
-                model=MODEL_CONFIG.get("formatter_model") or MODEL_CONFIG.get("content_model"),
-                messages=[{"role": "user", "content": repair_prompt}],
-                max_tokens=800,
-                temperature=MODEL_CONFIG.get("formatter_temperature", 0.1),
-            )
-        except Exception as exc:
-            print(f"动作修复模型调用失败：{exc}")
-            return None
-        repair_raw = _extract_response_text(response)
-        _debug_response("页面探索动作修复模型", response, repair_raw)
-        repaired = _extract_json(repair_raw)
-        if not _is_valid_action(repaired):
-            print(f"动作修复模型仍不可解析。返回预览：{_compact_text(repair_raw, 500)}", flush=True)
-        return repaired
 
     def _snapshot_brief(self, snapshot: dict) -> dict:
         return {
@@ -661,6 +630,14 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
                     "value": _compact_text(field.get("value", ""), 180),
                 }
                 for field in (snapshot.get("fields") or [])[:5]
+            ],
+            "semantic_targets": [
+                {
+                    "tag": item.get("tag", ""),
+                    "text": _compact_text(item.get("text", ""), 160),
+                    "attrs": _compact_text(item.get("attrs", ""), 160),
+                }
+                for item in (snapshot.get("semantic_targets") or [])[:12]
             ],
             "elements": [
                 f"{item.get('index')}: {item.get('text') or item.get('desc')}"
@@ -705,6 +682,7 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
                 "browser_state": snapshot.get("browser_state", ""),
                 "visible_text": _compact_text(snapshot.get("visible_text", ""), 1800),
                 "fields": snapshot.get("fields", [])[:12],
+                "semantic_targets": snapshot.get("semantic_targets", [])[:40],
                 "interactive_elements": elements,
                 "recent_actions": [asdict(step) for step in history[-6:]],
                 "recent_action_summaries": trace_notes[-8:],
@@ -828,8 +806,14 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
 
             if action_name in {"done", "extract_answer"}:
                 answer = action.get("answer") or snapshot.get("visible_text", "")
+                next_suggestion = _compact_text(action.get("next_suggestion") or "", 260)
                 self.memory.add(user_goal, answer, history)
-                return {"success": True, "answer": answer, "steps": [asdict(step) for step in history]}
+                return {
+                    "success": True,
+                    "answer": answer,
+                    "next_suggestion": next_suggestion,
+                    "steps": [asdict(step) for step in history],
+                }
 
             if action_name == "fail":
                 return {
@@ -837,6 +821,35 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
                     "answer": action.get("answer") or reason or "探索失败",
                     "steps": [asdict(step) for step in history],
                 }
+
+            if action.get("requires_user_confirmation"):
+                confirmation_message = (
+                    action.get("confirmation_message")
+                    or reason
+                    or "模型判断该动作需要用户确认。"
+                )
+                print("页面动作需要确认：")
+                print(f"- 动作：{json.dumps(action, ensure_ascii=False)}")
+                print(f"- 原因：{confirmation_message}")
+                confirmation = input("是否执行该动作？输入 y 执行，输入 n 取消 [y/N]：").strip().lower()
+                if confirmation not in {"y", "yes"}:
+                    observation = "用户拒绝执行模型标记为需确认的页面动作，任务已停止。"
+                    history.append(
+                        ExplorationStep(
+                            action=json.dumps(action, ensure_ascii=False),
+                            reason=reason,
+                            element_text="",
+                            result="用户取消",
+                            page_url=snapshot.get("url", ""),
+                            observation=observation,
+                        )
+                    )
+                    return {
+                        "success": True,
+                        "answer": observation,
+                        "steps": [asdict(step) for step in history],
+                        "remember": False,
+                    }
 
             before_state = await observe_browser_state(page)
             before_snapshot = snapshot
@@ -857,6 +870,17 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
                         element_text = element.get("text") or element.get("desc") or ""
                         await click_by_index(page, int(index), elements)
                         result = f"已点击 {element_text}"
+                elif action_name == "click_semantic_target":
+                    target_text = action.get("text") or action.get("value") or ""
+                    element_text = f"语义目标：{target_text}"
+                    success = await click_semantic_target(
+                        page,
+                        target_text,
+                        intent=action.get("intent", ""),
+                        avoid_texts=action.get("avoid_texts") or [],
+                        event_names=action.get("event_names") or [],
+                    )
+                    result = f"{'已点击语义目标' if success else '语义目标点击失败'}：{target_text}"
                 elif action_name == "click_text_in_element":
                     index = action.get("element_index")
                     target_text = action.get("text") or action.get("value") or ""
@@ -887,6 +911,10 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
                         element_text = element.get("text") or element.get("desc") or ""
                         await fill_by_index(page, int(index), value, elements)
                         result = f"已填写 {element_text}"
+                elif action_name == "save_and_leave":
+                    element_text = "暂存离开/保存草稿专用工具"
+                    success = await click_save_and_leave(page)
+                    result = "已执行暂存离开，草稿已保存" if success else "暂存离开工具未找到可点击的保存按钮"
                 elif action_name == "back":
                     await go_back(page)
                     result = "已返回上一页"

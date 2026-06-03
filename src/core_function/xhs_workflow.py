@@ -26,6 +26,7 @@ class WorkItem:
     steps: list[WorkStep] = field(default_factory=list)
     result: str = ""
     error: str = ""
+    next_suggestion: str = ""
     created_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
@@ -379,6 +380,14 @@ class XhsWorkflow:
         task.updated_at = datetime.now().isoformat(timespec="seconds")
         self.save()
 
+    def set_next_suggestion(self, suggestion: str):
+        task = self.current_task
+        if not task:
+            return
+        task.next_suggestion = (suggestion or "").strip()
+        task.updated_at = datetime.now().isoformat(timespec="seconds")
+        self.save()
+
     def fail(self, error: str):
         task = self.current_task
         if not task:
@@ -416,13 +425,10 @@ class XhsWorkflow:
                 return "下一步：先检查本机网络、代理或 DNS；如果浏览器里已有小红书页面，重新发起任务时 Agent 会优先复用现有页面。"
             return "下一步：根据错误信息调整参数或重新发起任务。"
         if task.status == "completed":
-            suggestions = {
-                "generate_prompts": "下一步：如果不满意提示词，可以继续说“修改提示词...”；满意后说“生成图片”。",
-                "revise_prompts": "下一步：确认提示词满意后说“生成图片”。",
-                "generate_images": "下一步：可以说“写文案”或“创建草稿”。",
-                "plan_note_text": "下一步：可以说“创建草稿”。",
-            "explore_page_task": "下一步：如果结果满意，可以继续要求我复用这条路径；如果不满意，可以补充约束让我继续探索。",
-        }
-            return suggestions.get(task.action, "下一步：等待用户继续指令。")
+            if task.next_suggestion:
+                if task.next_suggestion.startswith("下一步"):
+                    return task.next_suggestion
+                return f"下一步：{task.next_suggestion}"
+            return "下一步：等待用户继续指令。"
         pending = [step.name for step in task.steps if step.status == "pending"]
         return f"下一步：继续执行 {pending[0]}。" if pending else "下一步：整理任务结果。"

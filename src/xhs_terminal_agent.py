@@ -122,52 +122,10 @@ def _normalize_intent(intent: dict, user_text: str) -> dict:
         args.setdefault("revision_instruction", user_text)
     elif action == "explore_page_task":
         args.setdefault("user_goal", user_text)
-        args["requires_confirmation"] = bool(args.get("requires_confirmation")) or _looks_like_destructive_page_task(user_text)
     elif action == "chat":
         args.setdefault("message", user_text)
 
     return {"action": action, "args": args}
-
-
-def _safe_fallback_intent(user_text: str) -> dict:
-    text = user_text.strip()
-    if _looks_like_page_exploration_task(text):
-        return {
-            "action": "explore_page_task",
-            "args": {
-                "user_goal": text,
-                "requires_confirmation": _looks_like_destructive_page_task(text),
-            },
-        }
-    if "提示词" in text:
-        return {"action": "generate_prompts", "args": _extract_prompt_args(text)}
-    return {"action": "chat", "args": {"message": text}}
-
-
-def _looks_like_page_exploration_task(text: str) -> bool:
-    page_nouns = ("草稿", "帖子", "笔记", "正文", "标题", "评论", "数据", "主页", "页面", "发帖", "文档", "作品", "那篇")
-    task_verbs = (
-        "查看", "返回", "读取", "获取", "找到", "打开", "进入", "帮我看", "给我看",
-        "提取", "编辑", "删除", "移除", "清空", "撤回", "删掉", "去掉",
-        "保存", "暂存", "回到", "离开"
-    )
-    content_queries = ("正文", "内容", "标题", "是什么", "什么", "第", "第一篇", "较早", "最早", "时间更早", "更早")
-    if "草稿" in text and any(word in text for word in ("多少", "几", "数量", "有多少", "几篇", "多少篇", "详情", "信息")):
-        return True
-    if "草稿" in text and any(word in text for word in content_queries):
-        return True
-    if any(noun in text for noun in page_nouns) and any(verb in text for verb in task_verbs):
-        return True
-    return "时间较早" in text or "最早编辑" in text or "时间更早" in text
-
-
-def _looks_like_destructive_page_task(text: str) -> bool:
-    destructive_verbs = ("删除", "移除", "清空", "撤回", "删掉", "去掉")
-    page_hints = (
-        "草稿", "帖子", "笔记", "文档", "作品", "那篇", "这篇", "那条", "这条",
-        "第一篇", "最早", "较早", "时间更早", "更早"
-    )
-    return any(word in text for word in destructive_verbs) and any(word in text for word in page_hints)
 
 
 def classify_intent(user_text: str) -> dict:
@@ -185,7 +143,7 @@ def classify_intent(user_text: str) -> dict:
 1. 如果用户是在操作“当前网页/当前草稿/已有帖子/草稿箱”，选择 explore_page_task。
 2. 如果用户说“保存草稿回到首页 / 暂存离开 / 保存当前草稿”，这是对当前网页的操作，必须选择 explore_page_task，不是 create_draft。
 3. create_draft 只用于“从零新建一篇草稿并上传素材填写文案”的完整流程。
-4. 删除、移除、清空、撤回等高风险网页任务也选择 explore_page_task，并设置 args.requires_confirmation=true。
+4. 删除、移除、清空、撤回等高风险网页任务也选择 explore_page_task；是否需要用户确认由页面探索模型在具体 action 中返回 requires_user_confirmation 决定。
 5. 生成提示词、生成图片、写文案是离线内容生产任务，不是网页操作。
 6. 如果无法确定，但请求看起来依赖当前页面状态，优先选择 explore_page_task。
 7. 只输出一个 JSON 对象，不要 Markdown，不要解释。
@@ -214,8 +172,8 @@ def classify_intent(user_text: str) -> dict:
         if isinstance(parsed, dict) and parsed.get("action"):
             return _normalize_intent(parsed, user_text)
     except Exception as exc:
-        print(f"意图识别模型暂不可用，使用保守兜底：{exc}")
-    return _normalize_intent(_safe_fallback_intent(user_text), user_text)
+        print(f"意图识别模型暂不可用，不执行自动路由：{exc}")
+    return {"action": "chat", "args": {"message": user_text}}
 
 
 async def dispatch(skills: XhsAgentSkills, workflow: XhsWorkflow, intent: dict) -> tuple[bool, str]:
@@ -288,13 +246,6 @@ async def dispatch(skills: XhsAgentSkills, workflow: XhsWorkflow, intent: dict) 
         return True, f"已输出页面状态：{state.get('loading_phase')}"
     elif action == "explore_page_task":
         user_goal = args.get("user_goal") or args.get("message") or ""
-        if args.get("requires_confirmation"):
-            print("检测到删除/移除类高风险页面任务。")
-            print(f"任务内容：{user_goal}")
-            confirmation = input("确认继续？输入 y 继续，输入 n 取消 [y/N]：").strip().lower()
-            if confirmation not in {"y", "yes"}:
-                return True, "用户取消删除/移除类页面任务"
-            user_goal = f"{user_goal}。这是用户已确认的删除/移除类任务：先定位目标对象，遇到最终确认弹窗时再点击确认；不要删除不匹配的对象。"
         worklog_hints = workflow.search_experiences(user_goal)
         if worklog_hints:
             print(f"已从 xhs_agent_worklog.json 检索到 {len(worklog_hints)} 条相关成功经验：")
@@ -323,11 +274,14 @@ async def dispatch(skills: XhsAgentSkills, workflow: XhsWorkflow, intent: dict) 
             workflow.step("观察页面和可交互元素")
             workflow.step("小步探索并观察反馈")
             workflow.step("提取结果并记录成功路径")
-            workflow.remember_experience(
-                user_request=args.get("user_goal") or user_goal,
-                result=result.get("answer", "探索任务已执行"),
-                raw_steps=result.get("steps") or [],
-            )
+            if result.get("next_suggestion"):
+                workflow.set_next_suggestion(result.get("next_suggestion", ""))
+            if result.get("remember", True):
+                workflow.remember_experience(
+                    user_request=args.get("user_goal") or user_goal,
+                    result=result.get("answer", "探索任务已执行"),
+                    raw_steps=result.get("steps") or [],
+                )
             return True, result.get("answer", "探索任务已执行")
         finally:
             skills.cleanup_page_task_trace()

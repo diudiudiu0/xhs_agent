@@ -34,6 +34,281 @@ async def _click_actionable_ancestor(locator):
     )
 
 
+async def click_semantic_target(page, target_text, intent="", avoid_texts=None, event_names=None):
+    """
+    按语义点击一个目标，而不要求它一定出现在 extract_interactive_elements 的列表里。
+
+    适用于小红书这类前端组件场景：按钮文字可能藏在自定义组件属性、Shadow DOM、
+    aria/title/data 属性或固定底部工具条中。这个函数只在 Agent 明确返回
+    click_semantic_target 动作时执行，不作为页面探索的自动兜底。
+    """
+    target_text = str(target_text or "").strip()
+    if not target_text:
+        raise Exception("语义点击目标文本不能为空")
+
+    avoid_texts = [str(item).strip() for item in (avoid_texts or []) if str(item).strip()]
+    event_names = [str(item).strip() for item in (event_names or []) if str(item).strip()]
+    payload = {
+        "targetText": target_text,
+        "intent": str(intent or ""),
+        "avoidTexts": avoid_texts,
+        "eventNames": event_names,
+    }
+    script = """payload => {
+        const targetText = payload.targetText || '';
+        const intent = payload.intent || '';
+        const avoidTexts = payload.avoidTexts || [];
+        const explicitEventNames = payload.eventNames || [];
+        const clickableSelector = [
+            'button',
+            'a',
+            '[role="button"]',
+            '[role="link"]',
+            '[onclick]',
+            '[tabindex]',
+            '[class*="ce-btn"]',
+            '[class*="btn"]',
+            '[class*="Btn"]',
+            '[class*="button"]',
+            '[class*="Button"]',
+            'xhs-publish-btn',
+            '[save-text]',
+            '[submit-text]',
+            '[cancel-text]',
+            '[confirm-text]',
+            '[delete-text]',
+            '[data-text]',
+            '[data-title]',
+            '[aria-label]',
+            '[title]',
+            'span',
+            'div'
+        ].join(',');
+        const attrNames = [
+            'aria-label',
+            'title',
+            'alt',
+            'placeholder',
+            'value',
+            'data-text',
+            'data-title',
+            'data-name',
+            'data-label',
+            'save-text',
+            'submit-text',
+            'cancel-text',
+            'confirm-text',
+            'delete-text'
+        ];
+
+        function norm(text) {
+            return String(text || '').replace(/\\s+/g, '').trim();
+        }
+
+        const target = norm(targetText);
+        const avoid = avoidTexts.map(norm).filter(Boolean);
+
+        function textOf(el) {
+            if (!el) return '';
+            const parts = [];
+            for (const name of attrNames) {
+                const value = el.getAttribute && el.getAttribute(name);
+                if (value) parts.push(value);
+            }
+            parts.push(el.innerText || '');
+            parts.push(el.textContent || '');
+            return norm(parts.filter(Boolean).join(' '));
+        }
+
+        function attrTextOf(el) {
+            if (!el || !el.getAttribute) return '';
+            return norm(attrNames.map(name => el.getAttribute(name) || '').filter(Boolean).join(' '));
+        }
+
+        function visible(el, allowComponent = false) {
+            if (!el || !el.getBoundingClientRect) return false;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            const rendered = style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && style.opacity !== '0'
+                && style.pointerEvents !== 'none';
+            if (!rendered) return false;
+            if (rect.width > 0 && rect.height > 0) return true;
+            return allowComponent && textOf(el).includes(target);
+        }
+
+        function collect(root) {
+            const result = [];
+            const seen = new Set();
+            function add(el) {
+                if (!el || seen.has(el)) return;
+                seen.add(el);
+                result.push(el);
+            }
+            function visit(node) {
+                if (!node) return;
+                if (node.nodeType === Node.ELEMENT_NODE) add(node);
+                if (node.querySelectorAll) {
+                    for (const el of node.querySelectorAll(clickableSelector)) {
+                        add(el);
+                    }
+                    for (const el of node.querySelectorAll('*')) {
+                        if (el.shadowRoot) visit(el.shadowRoot);
+                    }
+                }
+            }
+            visit(root);
+            return result;
+        }
+
+        function isAvoided(text) {
+            return avoid.some(word => word && text.includes(word));
+        }
+
+        function defaultEventsFor(el) {
+            if (explicitEventNames.length) return explicitEventNames;
+            const combined = `${target} ${intent}`.toLowerCase();
+            if (
+                combined.includes('save')
+                || target.includes('暂存')
+                || target.includes('存草稿')
+                || target.includes('保存')
+            ) {
+                return ['save', 'save-draft', 'saveDraft'];
+            }
+            if (
+                combined.includes('delete')
+                || combined.includes('remove')
+                || target.includes('删除')
+                || target.includes('移除')
+            ) {
+                return ['delete', 'remove'];
+            }
+            if (
+                combined.includes('confirm')
+                || target.includes('确认')
+                || target.includes('确定')
+            ) {
+                return ['confirm'];
+            }
+            return [];
+        }
+
+        function score(el) {
+            const fullText = textOf(el);
+            const attrText = attrTextOf(el);
+            if (!fullText || !fullText.includes(target)) return -9999;
+            if (isAvoided(fullText) || isAvoided(attrText)) return -9999;
+            if (!visible(el, true)) return -9999;
+
+            const tag = el.tagName.toLowerCase();
+            const cls = String(el.className || '');
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            let value = 0;
+            if (fullText === target) value += 800;
+            if (attrText === target) value += 700;
+            if (attrText.includes(target)) value += 500;
+            if (tag === 'button') value += 420;
+            if (tag === 'a') value += 260;
+            if (el.getAttribute('role') === 'button') value += 340;
+            if (tag.includes('-')) value += 220;
+            if (/btn|button|ce-btn/i.test(cls)) value += 220;
+            if (el.hasAttribute('onclick') || el.hasAttribute('tabindex')) value += 80;
+            if (style.position === 'fixed' || style.position === 'sticky') value += 60;
+            if (rect.bottom > window.innerHeight * 0.65) value += 30;
+            if (fullText.length <= Math.max(12, target.length + 4)) value += 120;
+            value -= Math.max(0, fullText.length - target.length) * 2;
+            return value;
+        }
+
+        const nodes = collect(document)
+            .map(el => ({el, text: textOf(el), attrText: attrTextOf(el), score: score(el)}))
+            .filter(item => item.score > -9999)
+            .sort((a, b) => b.score - a.score);
+
+        if (!nodes.length) {
+            return {
+                clicked: false,
+                candidates: collect(document)
+                    .map(el => textOf(el))
+                    .filter(text => text && text.includes(target.slice(0, Math.min(2, target.length))))
+                    .filter(text => !isAvoided(text))
+                    .slice(0, 30)
+            };
+        }
+
+        const picked = nodes[0];
+        let el = picked.el;
+        const customEvents = defaultEventsFor(el);
+        const canDispatchComponentEvent = el.tagName.toLowerCase().includes('-')
+            || attrTextOf(el).includes(target)
+            || el.hasAttribute('save-text')
+            || el.hasAttribute('submit-text')
+            || el.hasAttribute('confirm-text')
+            || el.hasAttribute('delete-text');
+
+        if (canDispatchComponentEvent) {
+            for (const eventName of customEvents) {
+                el.dispatchEvent(new CustomEvent(eventName, {
+                    bubbles: true,
+                    composed: true,
+                    detail: {source: 'xhs-agent', targetText}
+                }));
+                return {
+                    clicked: true,
+                    mode: `custom-event:${eventName}`,
+                    text: picked.text,
+                    attrText: picked.attrText,
+                    score: picked.score,
+                    tag: el.tagName.toLowerCase()
+                };
+            }
+        }
+
+        const actionable = el.closest && el.closest(
+            'button,a,[role="button"],[role="link"],[onclick],[tabindex],'
+            + '[class*="ce-btn"],[class*="btn"],[class*="Btn"],[class*="button"],[class*="Button"]'
+        );
+        if (actionable && textOf(actionable).includes(target) && !isAvoided(textOf(actionable))) {
+            el = actionable;
+        }
+        el.scrollIntoView({block: 'center', inline: 'center'});
+        el.click();
+        el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+        return {
+            clicked: true,
+            mode: 'dom-click',
+            text: textOf(el) || picked.text,
+            attrText: attrTextOf(el) || picked.attrText,
+            score: picked.score,
+            tag: el.tagName.toLowerCase()
+        };
+    }"""
+
+    all_candidates = []
+    for frame in page.frames:
+        try:
+            result = await frame.evaluate(script, payload)
+        except Exception:
+            continue
+        if result.get("clicked"):
+            print(
+                "已通过语义目标点击："
+                f"{target_text} mode={result.get('mode')} text={result.get('text')}"
+            )
+            await asyncio.sleep(1.2)
+            return True
+        all_candidates.extend(result.get("candidates") or [])
+
+    if all_candidates:
+        print(f"未点到语义目标“{target_text}”，相关候选：{all_candidates[:20]}")
+    else:
+        print(f"未点到语义目标“{target_text}”，页面中未发现相关候选")
+    return False
+
+
 async def click_by_index(page, index, elements_cache):
     """
     根据元素索引点击。elements_cache 必须为提取的元素列表。
@@ -706,6 +981,18 @@ async def reveal_save_controls(page):
 
 async def click_save_and_leave(page):
     """保存草稿并结束本次任务。"""
+    try:
+        if await click_semantic_target(
+            page,
+            "暂存离开",
+            intent="save_draft",
+            avoid_texts=["发布", "立即发布", "确认发布", "提交"],
+            event_names=["save"],
+        ):
+            return True
+    except Exception:
+        pass
+
     async def click_xhs_publish_component_save():
         script = """() => {
             const components = Array.from(document.querySelectorAll('xhs-publish-btn[save-text], xhs-publish-btn[is-save-draft]'));
