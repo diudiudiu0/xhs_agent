@@ -1,4 +1,4 @@
-# test/test_login.py
+﻿# test/test_login.py
 import asyncio
 import sys
 from pathlib import Path
@@ -9,7 +9,7 @@ if str(TEST_DIR) not in sys.path:
 
 import _bootstrap  # noqa: F401
 
-from src.core_function.browser_actions import open_creator_home
+from src.browser_actions import open_creator_home
 
 async def main():
     page, browser, context, p = await open_creator_home(headless=False)  # 接收 p

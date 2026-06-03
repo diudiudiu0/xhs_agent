@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 
 TEST_DIR = Path(__file__).resolve().parent
@@ -7,8 +7,8 @@ if str(TEST_DIR) not in sys.path:
 
 import _bootstrap  # noqa: F401
 
-from src.core_function.task_config_loader import get_active_image_generation_task_config
-from src.core_function.image_generation_agent import generate_or_edit_image_from_config
+from src.task_config_loader import get_active_image_generation_task_config
+from src.image_generation_agent import generate_or_edit_image_from_config
 
 
 def main():

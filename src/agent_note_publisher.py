@@ -1,7 +1,7 @@
-# src/core_function/agent_note_publisher.py
+﻿# src/agent_note_publisher.py
 from pathlib import Path
 
-from src.core_function.browser_skills import (
+from src.browser_skills import (
     click_save_and_leave,
     click_by_index,
     fill_content_direct,
@@ -12,9 +12,9 @@ from src.core_function.browser_skills import (
     wait_seconds,
     upload_media_directly,
 )
-from src.core_function.llm_planner import build_task_description, expand_note_content, get_next_action, get_note_task_inputs
-from src.core_function.element_extractor import extract_interactive_elements
-from src.core_function.browser_state_observer import (
+from src.llm_planner import build_task_description, expand_note_content, get_next_action, get_note_task_inputs
+from src.element_extractor import extract_interactive_elements
+from src.browser_state_observer import (
     observe_browser_state,
     summarize_browser_state,
     wait_for_browser_feedback,

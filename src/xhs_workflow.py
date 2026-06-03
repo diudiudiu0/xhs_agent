@@ -1,4 +1,4 @@
-import json
+﻿import json
 import queue
 import threading
 from dataclasses import asdict, dataclass, field
@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKLOG_PATH = PROJECT_ROOT / "agent_memory" / "xhs_agent_worklog.json"
 
 

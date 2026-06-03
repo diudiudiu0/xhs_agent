@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import re
 import sys
@@ -9,20 +9,20 @@ from pathlib import Path
 from openai import OpenAI
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from cfg.model_config import MODEL_CONFIG
-from src.core_function.agent_note_publisher import agent_create_note_draft
-from src.core_function.browser_actions import open_creator_home
-from src.core_function.browser_skills import close_upload_dialog_if_present
-from src.core_function.browser_state_observer import observe_browser_state, summarize_browser_state
-from src.core_function.image_generation_agent import generate_or_edit_image_from_config
-from src.core_function.image_prompt_agent import generate_image_prompts_from_image
-from src.core_function.llm_planner import generate_note_text_from_image_prompts, get_note_task_inputs
-from src.core_function.task_config_loader import get_active_image_prompt_pipeline_config
-from src.core_function.xhs_page_explorer import XhsPageExplorer
+from src.agent_note_publisher import agent_create_note_draft
+from src.browser_actions import open_creator_home
+from src.browser_skills import close_upload_dialog_if_present
+from src.browser_state_observer import observe_browser_state, summarize_browser_state
+from src.image_generation_agent import generate_or_edit_image_from_config
+from src.image_prompt_agent import generate_image_prompts_from_image
+from src.llm_planner import generate_note_text_from_image_prompts, get_note_task_inputs
+from src.task_config_loader import get_active_image_prompt_pipeline_config
+from src.xhs_page_explorer import XhsPageExplorer
 
 
 def _text_client() -> OpenAI:

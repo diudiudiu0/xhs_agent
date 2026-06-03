@@ -1,4 +1,4 @@
-# src/core_function/element_extractor.py
+﻿# src/element_extractor.py
 import asyncio
 
 from playwright.async_api import Error as PlaywrightError

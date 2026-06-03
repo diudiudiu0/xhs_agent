@@ -1,8 +1,8 @@
-import ast
+﻿import ast
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TASK_CONFIG_PATH = PROJECT_ROOT / "cfg" / "task.yaml"
 IMAGE_TASK_CONFIG_PATH = PROJECT_ROOT / "cfg" / "image_task.yaml"
 

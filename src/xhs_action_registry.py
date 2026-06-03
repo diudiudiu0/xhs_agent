@@ -1,9 +1,9 @@
-from pathlib import Path
+﻿from pathlib import Path
 
-from src.core_function.task_config_loader import _safe_load_yaml_file
+from src.task_config_loader import _safe_load_yaml_file
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TERMINAL_ACTION_CONFIG_PATH = PROJECT_ROOT / "cfg" / "terminal_actions.yaml"
 
 

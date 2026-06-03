@@ -1,4 +1,4 @@
-# src/core_function/browser_skills.py
+﻿# src/browser_skills.py
 import asyncio
 import random
 import sys

@@ -1,12 +1,12 @@
-import os
+﻿import os
 import asyncio
 from pathlib import Path
 
 from playwright.async_api import Error as PlaywrightError, async_playwright
 
 
-# 获取项目根目录（向上三级：browser_actions.py -> core_function -> src -> root）
-PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
+# 获取项目根目录（browser_actions.py -> src -> root）
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AUTH_FILE = str(PROJECT_ROOT / "auth.json")
 BROWSER_PROFILE_DIR = PROJECT_ROOT / ".browser_profile" / "xhs_creator"
 CREATOR_HOME_URL = "https://creator.xiaohongshu.com/creator/home"
@@ -71,7 +71,7 @@ async def open_creator_home(headless=False, persistent=True):
     因此创建草稿/继续观察草稿时应优先使用 persistent context。
     """
     if not persistent and not os.path.exists(AUTH_FILE):
-        raise FileNotFoundError("未找到登录状态文件，请先运行src下的login_init.py 手动登录。")
+        raise FileNotFoundError("未找到登录状态文件，请先运行test下的login_init.py 手动登录。")
     p = await async_playwright().start()
 
     browser = None

@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import sys
 from pathlib import Path
 
@@ -8,8 +8,8 @@ if str(TEST_DIR) not in sys.path:
 
 import _bootstrap  # noqa: F401
 
-from src.core_function.browser_actions import open_creator_home
-from src.core_function.browser_skills import dump_save_stage_snapshot
+from src.browser_actions import open_creator_home
+from src.browser_skills import dump_save_stage_snapshot
 
 
 async def main():

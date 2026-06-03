@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import re
 import sys
@@ -12,9 +12,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from cfg.model_config import MODEL_CONFIG
-from src.core_function.xhs_action_registry import VALID_ACTION_NAMES, render_action_catalog
-from src.core_function.xhs_workflow import XhsWorkflow
-from src.core_function.xhs_agent_skills import XhsAgentSkills
+from src.xhs_action_registry import VALID_ACTION_NAMES, render_action_catalog
+from src.xhs_workflow import XhsWorkflow
+from src.xhs_agent_skills import XhsAgentSkills
 
 
 HELP_TEXT = """

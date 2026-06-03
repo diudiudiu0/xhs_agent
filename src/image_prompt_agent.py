@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 import json
 import mimetypes
 import os
@@ -10,13 +10,13 @@ from pathlib import Path
 from openai import APIConnectionError, APITimeoutError, OpenAI
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from cfg.model_config import MODEL_CONFIG, VISION_PROMPT_MODEL_CONFIG
-from src.core_function.image_generation_agent import generate_or_edit_image_from_config
-from src.core_function.task_config_loader import get_active_image_prompt_pipeline_config, get_active_image_prompt_task_config
+from src.image_generation_agent import generate_or_edit_image_from_config
+from src.task_config_loader import get_active_image_prompt_pipeline_config, get_active_image_prompt_task_config
 
 
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}

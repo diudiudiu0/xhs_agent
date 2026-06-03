@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import re
 from copy import deepcopy
@@ -10,7 +10,7 @@ from typing import Any
 from openai import OpenAI
 
 from cfg.model_config import MODEL_CONFIG
-from src.core_function.browser_skills import (
+from src.browser_skills import (
     click_by_index,
     click_save_and_leave,
     click_semantic_target,
@@ -20,16 +20,16 @@ from src.core_function.browser_skills import (
     fill_title_direct,
     go_back,
 )
-from src.core_function.browser_state_observer import (
+from src.browser_state_observer import (
     observe_browser_state,
     summarize_browser_state,
     wait_for_browser_feedback,
 )
-from src.core_function.element_extractor import extract_interactive_elements
-from src.core_function.system_dialog_observer import close_native_dialog_with_escape, get_native_dialog_state
+from src.element_extractor import extract_interactive_elements
+from src.system_dialog_observer import close_native_dialog_with_escape, get_native_dialog_state
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPLORATION_MEMORY_PATH = PROJECT_ROOT / "agent_memory" / "xhs_exploration_memory.json"
 EXPLORATION_TRACE_PATH = PROJECT_ROOT / "agent_memory" / "xhs_exploration_trace.jsonl"
 VALID_ACTIONS = {

@@ -1,13 +1,13 @@
-# src/core_function/llm_planner.py
+﻿# src/llm_planner.py
 import json
 from pathlib import Path
 
 from cfg.model_config import MODEL_CONFIG
-from src.core_function.element_extractor import extract_interactive_elements
-from src.core_function.task_config_loader import get_active_note_task_config
+from src.element_extractor import extract_interactive_elements
+from src.task_config_loader import get_active_note_task_config
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 

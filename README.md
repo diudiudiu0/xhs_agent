@@ -1,4 +1,4 @@
-# xhs_agent
+﻿# xhs_agent
 
 一个基于 Playwright + DeepSeek 的小红书创作中心自动化 Agent，用于登录复用、进入创作中心、创建图文/视频笔记草稿、填写标题与正文，并按配置自动上传图片或视频素材。项目也提供独立的图片生成 Agent，用于提前生成本地图片素材。
 
@@ -55,7 +55,7 @@ playwright install chromium
 首次使用前先运行登录脚本：
 
 ```bash
-python src/login_init.py
+python test/login_init.py
 ```
 
 浏览器打开后，请手动完成扫码或账号登录。登录成功后程序会把登录状态保存到项目根目录的 `auth.json`，同时写入 `.browser_profile/xhs_creator` 持久浏览器目录。
@@ -80,7 +80,7 @@ python test/test_create_draft.py
 如果希望通过终端与小红书个人账号 Agent 对话，运行：
 
 ```bash
-python src/xhs_terminal_agent.py
+python test/xhs_terminal_agent.py
 ```
 
 终端 Agent 会维护当前会话记忆，已封装的技能包括：
@@ -168,17 +168,17 @@ python test/test_image_prompt_generation.py
 
 ## 主要文件
 
-- `src/login_init.py`：手动登录，保存 `auth.json`，并初始化 `.browser_profile/xhs_creator` 持久浏览器目录。
-- `src/core_function/browser_actions.py`：启动浏览器并进入创作中心。
-- `src/core_function/element_extractor.py`：提取当前页面可交互元素。
-- `src/core_function/browser_skills.py`：点击、填写、等待、上传图片/视频等浏览器动作。
-- `src/core_function/browser_state_observer.py`：采集页面加载、响应、弹窗、文件 input 和动作后页面变化状态。
-- `src/core_function/llm_planner.py`：调用模型根据页面元素规划下一步动作，并扩写正文。
-- `src/core_function/agent_note_publisher.py`：创建小红书草稿的主流程。
-- `src/core_function/xhs_agent_skills.py`：终端 Agent 的技能封装层，统一调用提示词生成、提示词修改、图片生成、页面状态和创建草稿。
-- `src/xhs_terminal_agent.py`：小红书个人账号终端交互 Agent 入口。
-- `src/core_function/image_generation_agent.py`：图片生成/编辑方法实现，不负责具体测试入口。
-- `src/core_function/image_prompt_agent.py`：根据现有图片生成图片生成提示词，并调用图片生成流程出图。
+- `test/login_init.py`：手动登录，保存 `auth.json`，并初始化 `.browser_profile/xhs_creator` 持久浏览器目录。
+- `src/browser_actions.py`：启动浏览器并进入创作中心。
+- `src/element_extractor.py`：提取当前页面可交互元素。
+- `src/browser_skills.py`：点击、填写、等待、上传图片/视频等浏览器动作。
+- `src/browser_state_observer.py`：采集页面加载、响应、弹窗、文件 input 和动作后页面变化状态。
+- `src/llm_planner.py`：调用模型根据页面元素规划下一步动作，并扩写正文。
+- `src/agent_note_publisher.py`：创建小红书草稿的主流程。
+- `src/xhs_agent_skills.py`：终端 Agent 的技能封装层，统一调用提示词生成、提示词修改、图片生成、页面状态和创建草稿。
+- `test/xhs_terminal_agent.py`：小红书个人账号终端交互 Agent 入口。
+- `src/image_generation_agent.py`：图片生成/编辑方法实现，不负责具体测试入口。
+- `src/image_prompt_agent.py`：根据现有图片生成图片生成提示词，并调用图片生成流程出图。
 - `test/test_image_generation.py`：读取 `cfg/image_task.yaml` 的图片生成任务配置并执行一次生成/编辑测试。
 - `test/test_image_prompt_generation.py`：读取 `image_prompt_pipeline_tasks`，先执行看图提示词任务，再执行图片生成任务。
 - `test/test_generate_images_and_create_draft.py`：先生成图片素材，再按顺序上传这些图片并创建图文草稿。
@@ -215,11 +215,11 @@ python test/test_image_prompt_generation.py
 重新运行：
 
 ```bash
-python src/login_init.py
+python test/login_init.py
 ```
 
 然后再次运行测试。
 
 ### 草稿看起来没有保存
 
-小红书图文草稿依赖当前浏览器本地数据。请确认先运行过 `python src/login_init.py`，并且后续测试使用默认的持久浏览器目录 `.browser_profile/xhs_creator`。不要手动删除 `.browser_profile`，也不要在浏览器中清除站点数据，否则本地草稿可能丢失。
+小红书图文草稿依赖当前浏览器本地数据。请确认先运行过 `python test/login_init.py`，并且后续测试使用默认的持久浏览器目录 `.browser_profile/xhs_creator`。不要手动删除 `.browser_profile`，也不要在浏览器中清除站点数据，否则本地草稿可能丢失。
