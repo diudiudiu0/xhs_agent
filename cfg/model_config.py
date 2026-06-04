@@ -19,7 +19,7 @@ MODEL_CONFIG = {
     "planner_model": "deepseek-v4-flash",
     "content_model": "deepseek-v4-flash",
     "timeout": 30,
-    "planner_max_tokens": 800,
+    "planner_max_tokens": 1600,
     "content_max_tokens": 1800,
     "planner_temperature": 0.1,
     "content_temperature": 0.7,
@@ -29,6 +29,60 @@ MODEL_CONFIG = {
     "formatter_model": "deepseek-v4-flash",
     "formatter_max_tokens": 3200,
     "formatter_temperature": 0.1,
+}
+
+
+# Small-model config for page_context maintenance.
+# Responsibility:
+# - Compress page snapshots, action results, and observations into short structured page_context.
+# - This is a helper model, not the main account-management brain.
+# Recommended model: deepseek-v4-flash.
+PAGE_CONTEXT_MODEL_CONFIG = {
+    # 页面短期上下文维护模型：负责把动作日志和页面变化压缩成结构化 page_context。
+    # 后续“大脑”可以改用 deepseek-v4-pro，但这里建议继续用 flash，低成本、低温、稳定输出 JSON。
+    "provider": "deepseek",
+    "api_key": MODEL_CONFIG["api_key"],
+    "base_url": MODEL_CONFIG["base_url"],
+    "model": "deepseek-v4-flash",
+    "timeout": 30,
+    "max_tokens": 1800,
+    "temperature": 0.1,
+}
+
+
+# Small-model config for long-term memory review.
+# Responsibility:
+# - Runs in a background thread after a task succeeds.
+# - Decides whether the successful user request is semantically new enough to be written into agent_memory.
+# - Prevents duplicate successful paths from repeatedly polluting xhs_agent_worklog.json.
+# - It does NOT execute user tasks and does NOT control the browser.
+# Recommended model: deepseek-v4-flash because the task is small, structured, and should be cheap/stable.
+MEMORY_REVIEW_MODEL_CONFIG = {
+    "provider": "deepseek",
+    "api_key": MODEL_CONFIG["api_key"],
+    "base_url": MODEL_CONFIG["base_url"],
+    "model": "deepseek-v4-flash",
+    "timeout": 30,
+    "max_tokens": 800,
+    "temperature": 0.1,
+}
+
+
+# Main manager brain config.
+# Responsibility:
+# - Understand the user's account-management goal.
+# - Choose which skill/specialist agent to call.
+# - Decide whether to continue, ask the user, or produce the final answer.
+# - It should not directly click pages or call image APIs.
+# Recommended model: deepseek-v4-pro for stronger planning and multi-step reasoning.
+MANAGER_MODEL_CONFIG = {
+    "provider": "deepseek",
+    "api_key": MODEL_CONFIG["api_key"],
+    "base_url": MODEL_CONFIG["base_url"],
+    "model": "deepseek-v4-pro",
+    "timeout": 45,
+    "max_tokens": 2200,
+    "temperature": 0.2,
 }
 
 

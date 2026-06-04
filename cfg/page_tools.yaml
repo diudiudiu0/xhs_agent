@@ -1,0 +1,257 @@
+# Page exploration tool schema.
+#
+# 这里维护“网页探索 Agent 可以调用哪些页面工具、每个工具需要哪些参数、适合什么场景”。
+# Python 代码只负责注册与执行；这些自然语言说明会被发送给页面规划模型。
+
+page_tools:
+  - name: click
+    category: browser_action
+    description: 点击 extract_interactive_elements 返回的某个可交互元素。
+    required:
+      - element_index
+    optional:
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 目标元素已经明确出现在 interactive_elements 中，并且 element_index 指向正确对象。
+    avoid_when:
+      - 页面上有多个同名操作，无法仅靠 element_index 判断目标对象。
+    examples:
+      - {"action": "click", "element_index": 3, "requires_user_confirmation": false, "reason": "打开目标入口"}
+
+  - name: click_semantic_target
+    category: browser_action
+    description: 按目标文字或组件属性进行深度语义点击，不依赖 element_index。
+    required_any:
+      - ["text", "value"]
+    optional:
+      - intent
+      - avoid_texts
+      - event_names
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 目标按钮文字藏在语义目标、自定义组件属性、Shadow DOM、固定工具条中。
+      - 页面中目标文本基本唯一，或可以用 avoid_texts 排除相反语义。
+    avoid_when:
+      - 页面上有多个相同文本按钮，需要先定位目标对象附近区域。
+    examples:
+      - {"action": "click_semantic_target", "text": "暂存离开", "intent": "save_draft", "avoid_texts": ["发布"], "requires_user_confirmation": false, "reason": "保存草稿"}
+
+  - name: click_text_in_element
+    category: browser_action
+    description: 在某个已提取元素内部点击指定文字。
+    required:
+      - element_index
+    required_any:
+      - ["text", "value"]
+    optional:
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 一个列表项或卡片整体被提取为元素，目标操作文字在该元素内部。
+    avoid_when:
+      - 没有可靠 element_index，或目标对象没有出现在 interactive_elements 中。
+    examples:
+      - {"action": "click_text_in_element", "element_index": 12, "text": "删除", "requires_user_confirmation": true, "confirmation_message": "确认删除该项？", "reason": "删除目标项"}
+
+  - name: click_near_text
+    category: browser_action
+    description: 锚点区域点击。先用页面中的唯一锚点文本定位目标对象，再点击该区域附近的目标操作文字。
+    required_any:
+      - ["near_text", "nearText", "anchor_text", "scope_text"]
+    required_any_groups:
+      - ["text", "target_text", "value"]
+    optional:
+      - intent
+      - avoid_texts
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 页面有多个同名操作，例如多个回复、删除、编辑、更多。
+      - 需要根据用户名、内容片段、标题、时间、序号、保存时间等文本定位目标对象。
+    avoid_when:
+      - 当前页面还没有出现可以唯一定位目标对象的锚点文本。
+    examples:
+      - {"action": "click_near_text", "near_text": "目标对象唯一文本", "text": "目标操作", "requires_user_confirmation": false, "reason": "锚点区域点击"}
+
+  - name: click_media_near_text
+    category: browser_action
+    description: 锚点附近媒体点击。先定位目标对象，再点击该区域附近的图片、视频、封面或缩略图。
+    required_any:
+      - ["near_text", "nearText", "anchor_text", "scope_text"]
+    optional:
+      - intent
+      - avoid_texts
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 列表项、消息、评论、卡片旁边有可点击媒体封面或预览图。
+      - 用户目标需要查看该对象对应的帖子、媒体预览或详情。
+    avoid_when:
+      - 当前页面没有 media_targets，也没有可见媒体封面线索。
+    examples:
+      - {"action": "click_media_near_text", "near_text": "目标对象唯一文本", "requires_user_confirmation": false, "reason": "打开关联预览"}
+
+  - name: fill
+    category: browser_action
+    description: 填写 extract_interactive_elements 返回的某个输入元素。
+    required:
+      - element_index
+      - value
+    optional:
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 输入框已经明确出现在 interactive_elements 中。
+    avoid_when:
+      - 动态回复框、评论框、搜索框没有稳定 element_index。
+    examples:
+      - {"action": "fill", "element_index": 8, "value": "输入内容", "requires_user_confirmation": false, "reason": "填写输入框"}
+
+  - name: fill_textbox
+    category: browser_action
+    description: 按当前焦点或输入框提示填写动态文本框，不依赖 element_index。
+    required:
+      - value
+    optional:
+      - hint_text
+      - hintText
+      - near_text
+      - text
+      - prefer_focused
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 回复框、评论框、搜索框等动态输入框刚出现。
+      - fields 中出现合适的 hint，例如回复、评论、搜索、输入。
+    avoid_when:
+      - 页面上有多个同类输入框且无法用 hint_text 或当前焦点区分。
+    examples:
+      - {"action": "fill_textbox", "hint_text": "回复", "value": "回复内容", "requires_user_confirmation": false, "reason": "填写动态输入框"}
+
+  - name: fill_title
+    category: browser_action
+    description: 修改当前编辑页标题。
+    required:
+      - value
+    optional:
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 当前页面是笔记编辑页，用户明确要求修改标题。
+    examples:
+      - {"action": "fill_title", "value": "新标题", "requires_user_confirmation": false, "reason": "修改标题"}
+
+  - name: fill_content
+    category: browser_action
+    description: 修改当前编辑页正文。
+    required:
+      - value
+    optional:
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 当前页面是笔记编辑页，用户明确要求修改正文。
+    examples:
+      - {"action": "fill_content", "value": "新的正文内容", "requires_user_confirmation": false, "reason": "修改正文"}
+
+  - name: save_and_leave
+    category: browser_action
+    description: 保存当前草稿并暂存离开，不正式发布。
+    optional:
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 用户要求保存草稿、暂存离开、存草稿、保存并回到首页。
+    examples:
+      - {"action": "save_and_leave", "requires_user_confirmation": false, "reason": "保存草稿"}
+
+  - name: switch_site
+    category: session_action
+    description: 在 creator 和 web 两个网页会话之间切换。
+    required_any:
+      - ["target_site", "site", "value"]
+    optional:
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 当前站点不适合用户目标，需要切换到创作中心或小红书主站。
+    examples:
+      - {"action": "switch_site", "target_site": "web", "requires_user_confirmation": false, "reason": "切到主站"}
+
+  - name: back
+    category: browser_action
+    description: 返回上一页。
+    optional:
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 当前页面不包含目标信息，需要回到上一页。
+    examples:
+      - {"action": "back", "requires_user_confirmation": false, "reason": "返回上页"}
+
+  - name: wait
+    category: browser_action
+    description: 等待页面加载、弹窗出现或操作反馈完成。
+    optional:
+      - seconds
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 页面仍在加载，或上一步操作需要等待反馈。
+    examples:
+      - {"action": "wait", "seconds": 1.5, "requires_user_confirmation": false, "reason": "等待响应"}
+
+  - name: extract_answer
+    category: control
+    description: 当前页面已经包含用户要的信息，提取并返回结果。
+    required:
+      - answer
+      - next_suggestion
+    optional:
+      - reason
+      - requires_user_confirmation
+    use_when:
+      - 页面已有足够信息回答用户，无需继续点击。
+    examples:
+      - {"action": "extract_answer", "answer": "提取到的信息", "next_suggestion": "可以继续处理下一项", "requires_user_confirmation": false, "reason": "信息已出现"}
+
+  - name: done
+    category: control
+    description: 用户目标已经完成，返回结果并停止探索。
+    required:
+      - answer
+      - next_suggestion
+    optional:
+      - reason
+      - requires_user_confirmation
+    use_when:
+      - 页面操作已经完成，或已经给出用户需要的结果。
+    examples:
+      - {"action": "done", "answer": "任务已完成", "next_suggestion": "可以继续下一步", "requires_user_confirmation": false, "reason": "目标完成"}
+
+  - name: fail
+    category: control
+    description: 多次探索仍无法完成任务，说明原因并停止。
+    optional:
+      - answer
+      - reason
+      - requires_user_confirmation
+    use_when:
+      - 当前页面无法完成任务，且继续操作风险过高或缺少必要信息。
+    examples:
+      - {"action": "fail", "answer": "缺少目标信息", "requires_user_confirmation": false, "reason": "无法定位目标"}

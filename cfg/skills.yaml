@@ -1,18 +1,32 @@
-# Standard skill metadata for the XHS account-management agent.
+# Skill catalog for the XHS account-management manager agent.
 #
-# 这里维护“管理大脑看到的技能说明”。Python 文件只负责执行逻辑，
-# 这些容易调整的自然语言描述、示例、风险等级、输入输出说明和结果提示都放在这里。
+# The manager agent reads this file to decide which ability to call.
+# Python skill files should only execute logic; descriptions, risk policy,
+# examples, and manager-facing guidance should stay here.
 
 skills:
   generate_image_prompts:
-    description: 根据参考图片、URL 或用户目标生成一组图片生成提示词。
+    description: 根据参考图片、本机图片路径、图片 URL 或用户目标，生成一组可交给图片生成模型的高质量图片提示词。
+    executor_type: agent
+    executor_agent: image_prompt_agent
+    autonomy_level: medium
+    manager_role: manager 提供图片来源、生成数量和用户目标；该 skill 负责调用看图模型或提示词模型完成提示词生成。
     input_schema:
-      input_image: 可选。本地图片路径或图片 URL。
-      user_goal: 可选。用户对风格、主体、用途和修改方向的自然语言要求。
+      input_image: 可选。本机图片路径或图片 URL；为空时使用 cfg/image_task.yaml 中的任务配置。
+      user_goal: 可选。用户对图片风格、用途、主体和修改方向的自然语言要求。
       count: 可选。需要生成的提示词数量。
     output_schema:
       prompts: 图片提示词列表。
       count: 提示词数量。
+    preconditions:
+      - 如需要看图生成，input_image 或 cfg/image_task.yaml 中的 input_image 必须有效。
+    memory_reads:
+      - session_memory
+      - image_task_config
+    memory_writes:
+      - generated_prompts
+    risk_policy:
+      requires_confirmation_for: []
     risk_level: low
     side_effects:
       - llm_api_call
@@ -21,6 +35,7 @@ skills:
       - image
       - prompt
       - creative
+      - specialist_agent
     examples:
       - 根据 doc/pic_exam.png 生成 3 条脚轮商业图提示词
       - 看这张产品图，写一组小红书封面图 prompt
@@ -29,12 +44,24 @@ skills:
       observation_count: 生成提示词数量：{count}
 
   revise_image_prompts:
-    description: 根据用户反馈修改当前会话中的图片提示词。
+    description: 根据用户反馈修改当前会话中的图片提示词列表，保持数量一致并输出可直接用于图片生成的提示词。
+    executor_type: agent
+    executor_agent: image_prompt_agent
+    autonomy_level: medium
+    manager_role: manager 传入用户修改要求；该 skill 负责重写当前 session 中的提示词。
     input_schema:
-      revision_instruction: 必填。对当前提示词的修改要求。
+      revision_instruction: 必填。用户对当前提示词的修改要求。
     output_schema:
       prompts: 修改后的图片提示词列表。
       count: 提示词数量。
+    preconditions:
+      - session_memory.generated_prompts 必须已有内容。
+    memory_reads:
+      - generated_prompts
+    memory_writes:
+      - generated_prompts
+    risk_policy:
+      requires_confirmation_for: []
     risk_level: low
     side_effects:
       - llm_api_call
@@ -43,8 +70,9 @@ skills:
       - image
       - prompt
       - revision
+      - specialist_agent
     examples:
-      - 把第二张改成参数信息图
+      - 第二张提示词加上 M6 参数信息
       - 第一张不要纯白背景，增加品牌和生活场景
     messages:
       success: 已修改 {count} 条图片提示词。
@@ -52,12 +80,25 @@ skills:
       missing_instruction: revision_instruction 不能为空。
 
   generate_images:
-    description: 根据当前会话或显式传入的图片提示词生成图片，并保存到本机目录。
+    description: 根据当前会话或显式传入的图片提示词生成图片，并保存到本机配置目录，按顺序命名避免覆盖。
+    executor_type: tool
+    executor_agent: image_generation_agent
+    autonomy_level: low
+    manager_role: manager 提供 prompts 或使用 session 中的 prompts；该 skill 负责调用图片生成 API 并保存文件。
     input_schema:
       prompts: 可选。图片提示词列表；为空时使用当前会话提示词。
     output_schema:
       image_paths: 本机图片路径列表。
       count: 图片数量。
+    preconditions:
+      - prompts 或 session_memory.generated_prompts 必须非空。
+    memory_reads:
+      - generated_prompts
+      - image_task_config
+    memory_writes:
+      - generated_images
+    risk_policy:
+      requires_confirmation_for: []
     risk_level: low
     side_effects:
       - image_api_call
@@ -67,6 +108,7 @@ skills:
       - image
       - generation
       - asset
+      - tool
     examples:
       - 用当前提示词生成图片
       - 根据这三条 prompt 出三张图
@@ -75,12 +117,27 @@ skills:
       observation_count: 保存图片数量：{count}
 
   plan_note_text:
-    description: 根据当前图片提示词或用户给定标题，生成小红书帖子标题和正文。
+    description: 根据图片提示词、生成图片、主题或用户给定标题，生成小红书帖子标题和正文；正文应自然、实用，不使用疑问句作为主要表达方式。
+    executor_type: agent
+    executor_agent: content_agent
+    autonomy_level: medium
+    manager_role: manager 提供标题、主题或素材上下文；该 skill 负责生成帖子标题和正文。
     input_schema:
-      title: 可选。用户指定标题；为空时由模型生成标题。
+      title: 可选。用户指定的标题；为空时由模型生成标题。
     output_schema:
       title: 帖子标题。
       content: 帖子正文。
+    preconditions:
+      - 最好已有 generated_prompts 或明确主题；没有时使用 cfg/task.yaml 中的发帖任务配置。
+    memory_reads:
+      - generated_prompts
+      - generated_images
+      - note_task_config
+    memory_writes:
+      - last_note_title
+      - last_note_content
+    risk_policy:
+      requires_confirmation_for: []
     risk_level: low
     side_effects:
       - llm_api_call
@@ -89,6 +146,7 @@ skills:
       - content
       - copywriting
       - note
+      - specialist_agent
     examples:
       - 根据当前图片提示词写一篇脚轮推荐文案
       - 标题用脚轮选购指南，然后写正文
@@ -98,12 +156,30 @@ skills:
       observation_content_length: 正文长度：{content_length}
 
   create_note_draft:
-    description: 使用当前会话中的图片和文案创建一篇新的小红书图文草稿，并暂存离开。
+    description: 从零创建一篇新的小红书图文或视频草稿：打开创作中心、上传素材、填写标题正文、暂存离开。适合“新建草稿”，不适合编辑当前页面已有草稿。
+    executor_type: workflow
+    executor_agent: draft_workflow
+    autonomy_level: medium
+    manager_role: manager 确认这是新建草稿任务后调用；该 workflow 使用已有素材和文案完成完整创建流程。
     input_schema:
       image_files: 可选。本机图片路径列表；为空时使用当前会话生成的图片。
     output_schema:
       title: 草稿标题。
       image_count: 使用图片数量。
+    preconditions:
+      - 需要已有标题正文，或 cfg/task.yaml 中可以生成标题正文。
+      - 图文笔记需要图片素材；视频笔记需要视频素材。
+    memory_reads:
+      - generated_images
+      - last_note_title
+      - last_note_content
+      - note_task_config
+    memory_writes:
+      - last_created_draft_title
+    risk_policy:
+      requires_confirmation_for:
+        - publish_public_note
+      note: 该 workflow 默认暂存离开，不正式发布；如果未来改为发布，manager 必须确认。
     risk_level: medium
     side_effects:
       - opens_browser_if_needed
@@ -114,6 +190,7 @@ skills:
       - draft
       - publish
       - page
+      - workflow
     examples:
       - 用当前生成的图片和文案创建草稿
       - 把这些图片发到小红书草稿箱
@@ -125,10 +202,23 @@ skills:
       next_suggestion: 可以查看草稿箱确认保存结果，或继续生成下一篇选题。
 
   open_creator_page:
-    description: 打开或复用小红书创作中心页面，并保存在会话上下文中。
-    input_schema: {}
+    description: 打开或复用小红书网页会话，可以打开创作中心 creator，也可以打开小红书主站 web，并保存到技能会话上下文中。
+    executor_type: tool
+    executor_agent: browser_session
+    autonomy_level: low
+    manager_role: manager 只在需要准备页面或切换站点时调用；复杂页面操作应交给 explore_page_task。
+    input_schema:
+      target_site: 可选。creator 表示创作中心；web 表示小红书主站；为空时默认 creator。
     output_schema:
       url: 当前页面 URL。
+    preconditions: []
+    memory_reads:
+      - browser_session
+    memory_writes:
+      - browser_session
+      - active_site
+    risk_policy:
+      requires_confirmation_for: []
     risk_level: low
     side_effects:
       - opens_browser
@@ -137,19 +227,34 @@ skills:
       - page
       - browser
       - setup
+      - tool
     examples:
       - 打开小红书创作中心
+      - 打开小红书主站
       - 准备页面环境
     messages:
-      success: 已打开或复用小红书创作中心页面。
+      success: 已打开或复用小红书页面。
       observation_url: 当前 URL：{url}
 
   get_page_state:
-    description: 获取当前浏览器页面状态，例如加载阶段、响应情况、弹窗、文件输入框数量。
-    input_schema: {}
+    description: 获取当前浏览器页面状态，例如加载阶段、响应情况、网页弹窗、系统文件弹窗线索、文件输入框数量和当前 URL。
+    executor_type: tool
+    executor_agent: browser_state_observer
+    autonomy_level: low
+    manager_role: manager 在判断页面是否卡住、是否需要等待或是否需要处理弹窗时调用。
+    input_schema:
+      target_site: 可选。creator 或 web；传入时先切换/打开对应页面。
     output_schema:
       state: 浏览器状态快照。
       summary: 状态摘要文本。
+    preconditions:
+      - 需要可用浏览器会话；没有时会打开默认页面。
+    memory_reads:
+      - browser_session
+    memory_writes:
+      - last_page_state
+    risk_policy:
+      requires_confirmation_for: []
     risk_level: low
     side_effects:
       - opens_browser_if_needed
@@ -158,44 +263,95 @@ skills:
       - page
       - browser
       - observe
+      - tool
     examples:
       - 查看页面现在有没有卡住
       - 检查是否有弹窗
+    messages:
+      success: 页面状态已获取。
 
   explore_page_task:
-    description: 通用网页操作技能。用于查看、编辑、删除、保存当前草稿、进入草稿箱、读取页面内容等依赖当前页面状态的任务。
+    description: 高自治网页探索 agent。用于在创作中心和小红书主站之间自由切换，完成依赖当前网页状态的任务，包括查看草稿箱、读取或编辑草稿标题正文、保存当前草稿、删除目标草稿、打开主页、查看帖子详情、读取评论、点击评论右侧帖子封面预览、根据帖子内容回复评论等。
+    executor_type: agent
+    executor_agent: page_explorer
+    autonomy_level: high
+    manager_role: manager 只提供用户目标、可选站点和长期记忆线索；page_explorer 负责观察页面、选择工具、执行动作、维护 page_context，并在高风险动作前请求确认。
     input_schema:
       user_goal: 必填。用户对页面任务的自然语言目标。
       max_steps: 可选。最大探索步数。
       worklog_hints: 可选。长期记忆检索到的历史成功经验。
+      target_site: 可选。creator 表示从创作中心开始；web 表示从小红书主站开始；为空时由 agent 根据目标和当前页面自行判断。
     output_schema:
       answer: 任务结果。
       steps: 探索步骤。
       next_suggestion: 下一步建议。
+    preconditions:
+      - 需要可用浏览器会话；没有时会打开或复用页面。
+      - 删除、发送评论、发布等高风险动作必须由 page_explorer 返回 requires_user_confirmation 并由用户确认。
+    memory_reads:
+      - browser_session
+      - page_context
+      - long_term_memory
+      - exploration_trace
+    memory_writes:
+      - page_task_answer
+      - page_task_steps
+      - page_context
+      - exploration_trace
+    risk_policy:
+      requires_confirmation_for:
+        - delete_draft
+        - delete_note
+        - publish_public_note
+        - send_comment
+        - send_reply
+        - destructive_page_action
+      confirmation_owner: page_explorer
     risk_level: variable
     side_effects:
       - opens_browser_if_needed
       - clicks_page
       - may_modify_page_content
+      - may_switch_between_creator_and_web
     tags:
       - page
       - browser
       - exploration
       - operation
+      - specialist_agent
+      - creator_site
+      - web_site
+      - comments
+      - drafts
     examples:
       - 保存当前草稿并回到首页
       - 查看草稿箱里的稿子详情
       - 把当前草稿标题改成 agent测试
+      - 打开我的主页并查看最新帖子的评论
+      - 根据喜仔的评论和所属帖子内容回复喜仔
+      - 删除保存于 2026-05-31 19:38:43 的那篇草稿
     messages:
       missing_goal: user_goal 不能为空。
       failed: 页面探索任务未完成。
       success: 页面探索任务已完成。
 
   handle_dialogs:
-    description: 尝试处理当前页面上的网页弹窗、上传收尾弹窗或文件选择器残留影响。
+    description: 尝试处理当前页面上的网页弹窗、上传收尾弹窗或文件选择器残留影响。复杂页面任务中通常由 explore_page_task 自己处理。
+    executor_type: tool
+    executor_agent: browser_dialog_handler
+    autonomy_level: low
+    manager_role: manager 仅在用户明确要求处理弹窗，或某个 skill 返回弹窗阻塞时调用。
     input_schema: {}
     output_schema:
       handled: 是否处理了弹窗。
+    preconditions:
+      - 需要可用浏览器会话。
+    memory_reads:
+      - browser_session
+    memory_writes:
+      - last_dialog_result
+    risk_policy:
+      requires_confirmation_for: []
     risk_level: low
     side_effects:
       - opens_browser_if_needed
@@ -204,6 +360,7 @@ skills:
       - page
       - browser
       - dialog
+      - tool
     examples:
       - 关闭上传弹窗
       - 处理当前页面弹窗
@@ -211,31 +368,55 @@ skills:
       success: 弹窗处理结果：{handled}
 
   show_session_memory:
-    description: 读取当前技能会话记忆，包括已生成提示词、图片、标题正文和页面是否打开。
+    description: 读取当前技能会话记忆，包括已生成提示词、图片、标题正文、浏览器页面和当前 active_site。
+    executor_type: tool
+    executor_agent: session_memory
+    autonomy_level: low
+    manager_role: manager 在需要向用户解释当前进度或决定下一步前调用。
     input_schema: {}
     output_schema:
       memory_text: 会话记忆文本。
+    preconditions: []
+    memory_reads:
+      - session_memory
+      - browser_session
+    memory_writes: []
+    risk_policy:
+      requires_confirmation_for: []
     risk_level: low
     side_effects:
       - reads_session_memory
     tags:
       - session
       - memory
+      - tool
     examples:
       - 查看当前会话记忆
       - 现在有哪些已生成素材
 
   close_session:
     description: 关闭当前浏览器和 Playwright 会话，释放页面资源。
+    executor_type: tool
+    executor_agent: browser_session
+    autonomy_level: low
+    manager_role: manager 只在用户明确要求结束会话时调用。
     input_schema: {}
     output_schema:
       closed: 是否已关闭。
+    preconditions: []
+    memory_reads:
+      - browser_session
+    memory_writes:
+      - browser_session
+    risk_policy:
+      requires_confirmation_for: []
     risk_level: low
     side_effects:
       - closes_browser
     tags:
       - session
       - browser
+      - tool
     examples:
       - 关闭当前浏览器会话
       - 结束本轮账号管理会话

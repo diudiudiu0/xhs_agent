@@ -62,6 +62,14 @@ python test/login_init.py
 
 小红书创作中心提示“草稿存储于当前使用的浏览器本地”。因此本项目默认使用 Playwright persistent context 复用同一个浏览器数据目录，而不是每次只用 `auth.json` 创建全新的临时 context。这样更适合保存和继续观察本地草稿。
 
+如果需要进入小红书主站，用于后续读取个人主页、笔记详情、评论和回复评论，运行：
+
+```bash
+python test/login_xhs_home_init.py
+```
+
+该脚本会打开 `https://www.xiaohongshu.com/`，登录状态保存到 `auth_xhs_web.json`，持久浏览器目录为 `.browser_profile/xhs_web`。这套数据与创作中心的 `.browser_profile/xhs_creator` 分开维护。
+
 ## 创建草稿测试
 
 运行测试：

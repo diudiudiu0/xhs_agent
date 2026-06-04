@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from cfg.model_config import MODEL_CONFIG, VISION_PROMPT_MODEL_CONFIG
 from src.image_generation_agent import generate_or_edit_image_from_config
+from src.prompt_config import get_prompt_config
 from src.task_config_loader import get_active_image_prompt_pipeline_config, get_active_image_prompt_task_config
 
 
@@ -391,7 +392,7 @@ def _call_vision_prompt_model(
 
     system_prompt = VISION_PROMPT_MODEL_CONFIG.get(
         "system_prompt",
-        "你是一名专业的电商视觉提示词工程师。",
+        str(get_prompt_config("image_prompt_agent", "default_system_prompt", default="")),
     )
     user_content = [
         {"type": "image_url", "image_url": {"url": image_url}},

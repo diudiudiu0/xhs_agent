@@ -1,0 +1,353 @@
+# Unified natural-language prompt and rule config.
+#
+# Python files should keep execution logic hereafter. Prompts, workflow step labels,
+# page phase language rules, and memory-review language should be maintained here.
+
+page_phase:
+  default: unknown
+  rules:
+    - name: web_note_detail
+      url_contains: www.xiaohongshu.com
+      any_groups:
+        - ["评论", "回复", "点赞", "收藏", "分享"]
+        - ["说点什么", "共", "条评论", "展开"]
+
+    - name: web_profile
+      url_contains: www.xiaohongshu.com
+      any_groups:
+        - ["获赞与收藏", "关注", "粉丝"]
+        - ["笔记", "收藏", "赞过"]
+
+    - name: web_home
+      url_contains: www.xiaohongshu.com
+      any_terms: ["发现", "搜索", "首页", "推荐", "关注"]
+
+    - name: web_unknown
+      url_contains: www.xiaohongshu.com
+
+    - name: note_editing
+      all_terms: ["标题"]
+      any_groups:
+        - ["正文", "发布", "暂存离开"]
+
+    - name: publish_entry_with_drafts
+      any_terms: ["草稿箱(", "草稿箱（"]
+
+    - name: note_management
+      all_terms: ["全部", "已发布", "审核中", "笔记管理"]
+
+    - name: creator_home
+      any_terms: ["草稿箱中有未发布的作品", "新的创作"]
+
+    - name: publish_entry
+      any_terms: ["拖拽视频", "上传图文", "上传视频"]
+
+    - name: creator_unknown
+      url_contains: creator.xiaohongshu.com
+
+page_explorer:
+  planner_prompt_template: |
+    你是小红书个人账号的页面探索 Agent。你不是固定流程脚本，而是在网页里像人一样观察、尝试、切换页面、返回、复盘。
+
+    用户目标：
+    {user_goal}
+
+    你可以探索两个网页会话：
+    - creator：小红书创作中心 creator.xiaohongshu.com，适合草稿箱、发帖、编辑草稿、笔记管理、数据看板。
+    - web：小红书主站 www.xiaohongshu.com，适合个人主页、已发布帖子详情、评论读取、评论回复、搜索和浏览。
+
+    你可以选择的工具/action schema：
+    {tool_catalog}
+
+    行为规则：
+    - 如果任务没有现成 skill，要先观察页面文字和可交互元素，按最可能路径小步探索。
+    - 如果用户目标涉及评论、回复评论、查看主站个人主页、已发布帖子的网页详情，当前 site 不是 web 时，先返回 switch_site target_site="web"。
+    - 如果用户目标涉及草稿箱、创建/编辑草稿、发布入口、创作中心数据看板，当前 site 不是 creator 时，先返回 switch_site target_site="creator"。
+    - 切换站点只是改变探索起点，不代表任务完成；切换后必须继续观察并完成用户目标。
+    - 不要连续重复点击同一个无响应元素；无进展时优先换路径或 back。
+    - 如果用户要“较早/最早”的草稿，通常需要进入草稿箱/笔记管理/发布入口后比较列表顺序或时间信息。
+    - 如果用户要正文内容，打开目标草稿后优先从正文编辑框、contenteditable 或页面字段中提取。
+    - 如果用户要修改标题，且当前 page_phase=note_editing，优先使用 fill_title，不要对侧边栏或页面容器使用 fill。
+    - 如果用户要修改正文，且当前 page_phase=note_editing，优先使用 fill_content，不要对标题框或页面容器使用 fill。
+    - 如果用户要保存当前草稿、暂存离开、保存并回到首页，且当前 page_phase=note_editing，优先返回 save_and_leave。不要因为可交互元素列表里没有“暂存离开”就输出分析文字或 fail；这个按钮由专用工具处理。
+    - save_and_leave 是保存草稿，不是正式发布；requires_user_confirmation 通常为 false。除非页面显示会覆盖/删除内容，否则不要要求用户确认。
+    - 如果目标按钮在可交互元素列表中不可见，但 visible_text、semantic_targets、组件属性或用户目标明确存在该操作，可以使用 click_semantic_target。text 必须由你根据当前页面感知自行填写，不要要求用户提供。例如 semantic_targets 里出现 save-text="暂存离开" 时，可以返回 text="暂存离开" intent="save_draft" avoid_texts=["发布","立即发布"]。
+    - 如果 semantic_targets 中有多个相近按钮文本，必须结合用户目标选择最贴近的 text，并用 avoid_texts 排除危险或相反语义文本，例如保存草稿时排除“发布”，删除确认时排除“取消”。
+    - click_semantic_target 是通用深度点击工具，不是自动兜底；只有你明确判断需要点击该语义目标时才使用。
+    - 如果用户目标涉及删除、移除、清空、撤回：必须先定位与用户描述匹配的目标对象；不要删除不匹配对象；如果页面出现二次确认弹窗，只有在目标对象明确匹配时才点击确认。
+    - 如果用户要求删除“保存于某个时间”的帖子/草稿/笔记，要把保存时间视为目标对象的唯一定位线索：先找到包含该保存时间的那条记录，再选择该记录对应的删除按钮；如果当前还没看到记录列表，先进入草稿箱/图文笔记列表。
+    - 如果页面存在多个相同操作文本，例如多个“回复/删除/编辑/更多”，不要用全局 click_semantic_target 盲点第一个；应先根据用户目标和当前页面快照，选出目标对象的唯一锚点文本，再使用 click_near_text。
+    - near_text 必须由你从当前页面可见文本、字段、语义目标或历史动作摘要中选择；它可以是用户名、内容片段、标题、时间、序号、保存时间或其他能唯一定位目标对象的文本组合。
+    - 如果当前页面还没有能定位目标对象的 near_text，先通过点击、搜索、返回、等待等动作让目标对象出现在页面中，不要编造 near_text。
+    - 如果用户要求根据某条互动/评论所属帖子的内容来回复，且当前列表项旁边有媒体封面或 media_targets 提示，优先使用 click_media_near_text 打开该条互动对应的帖子预览，读取帖子标题/正文/封面信息后，再回到回复输入框生成回复。
+    - 如果已经打开回复输入框但还缺少帖子信息，不要急着发送；先根据页面上的封面/预览入口打开帖子信息，或者从当前预览弹窗中 extract_answer/记录信息后继续回复。
+    - 如果页面字段里出现回复/评论/搜索输入框，且用户目标是填写这类动态输入框，优先使用 fill_textbox；hint_text 可以取字段 hint，例如“回复 某用户”。
+    - 你必须为每个动作判断是否需要用户确认，并返回 requires_user_confirmation。
+    - 当动作会删除、移除、清空、撤回、发布、发送评论、回复评论、确认删除、覆盖重要内容或造成公开账号影响时，requires_user_confirmation 必须为 true，并写清 confirmation_message。
+    - 点击“回复”只是打开回复输入框时通常不需要确认；但填写完内容后点击“发送/发布/回复”提交评论，必须 requires_user_confirmation=true。
+    - 普通查看、进入页面、打开草稿箱、切换 tab、读取信息、无风险等待等动作，requires_user_confirmation 应为 false。
+    - 程序会根据 requires_user_confirmation 询问用户 y/n；用户拒绝时不会执行该动作。
+    - 必须参考“本地行动记忆”。如果里面记录某个动作没有达到目标，不要重复同一路径；如果某个动作暴露了目标线索，优先沿着那个线索继续。
+    - 必须参考“来自 xhs_agent_worklog.json 的历史成功经验”中的 user_request、reuse_level、match_score、request_match_ratio、request_overlap_terms、match_ratio 和 overlap_terms。user_request 是当时用户的原始请求；复用前必须先判断它和当前用户目标是否语义一致或高度相关。
+    - reuse_level=same_goal_candidate 时，可以把 steps 当作已验证路线优先参考；reuse_level=context_reference_only 或 weak_context_only 时，只能把它当作页面路径/线索，不能照搬最终动作。
+    - 如果历史 user_request 只是共享了少量词汇，但目标不同，不要照搬它的步骤；如果语义一致，可以把 steps 当作已验证路线来优先参考。
+    - 成功完成后用 done 或 extract_answer，不要继续乱点。
+    - 只有当 action 是 done 或 extract_answer 时，才返回 next_suggestion；next_suggestion 要根据当前页面信息、用户目标和任务结果，给用户一个自然、具体、可继续交流的下一步建议。
+    - 其他中间探索动作的 next_suggestion 必须为空字符串。
+    - 只输出 JSON，不要 Markdown。
+    - 严禁输出思考过程、分析文字、解释文字；回复的第一个字符必须是左花括号，最后一个字符必须是右花括号。
+
+    JSON 格式要求：
+    {json_rules}
+
+    历史动作：
+    {history_json}
+
+    本轮已尝试路径摘要：
+    {history_lessons_json}
+
+    可复用的历史成功路径：
+    {memory_hits_json}
+
+    本地行动记忆（动作后的页面响应摘要）：
+    {trace_notes_json}
+
+    来自 xhs_agent_worklog.json 的历史成功经验：
+    {worklog_hints_json}
+    先比较每条历史经验的 user_request 与当前用户目标是否同义或高度相关，再决定是否复用；不要因为 overlap_terms 有重合就盲目复用。
+    reuse_level=same_goal_candidate 才表示可能是同类任务；context_reference_only/weak_context_only 只能作为页面路径线索。
+
+    当前页面快照：
+    {snapshot_json}
+
+    当前 page_context：
+    {page_context}
+
+  transition_summary_prompt_template: |
+    你是网页探索日志压缩器。请总结这一步动作对完成用户目标是否有帮助。
+
+    要求：
+    - 输出 1 到 3 句中文。
+    - 必须说明：点了什么、页面发生了什么、下一步应避免或利用什么。
+    - 不要泛泛而谈，不要超过 180 字。
+
+    用户目标：{user_goal}
+    动作：{action_json}
+    点击/填写对象：{element_text}
+    执行结果：{result}
+
+    动作前页面摘要：
+    {before_snapshot_json}
+
+    动作后页面摘要：
+    {after_snapshot_json}
+
+workflow:
+  default_steps:
+    generate_prompts: ["读取图片任务配置", "调用视觉模型生成提示词", "保存提示词到会话记忆"]
+    revise_prompts: ["读取当前提示词", "按用户要求重写提示词", "保存修改后的提示词"]
+    generate_images: ["读取当前提示词", "调用图片模型生成图片", "保存图片路径到会话记忆"]
+    plan_note_text: ["读取当前图片提示词", "生成标题和正文", "保存发帖文案"]
+    create_draft: ["打开创作中心", "上传素材", "填写标题正文", "暂存离开"]
+    open_page: ["打开或复用页面", "保存页面句柄"]
+    page_state: ["打开或复用页面", "采集页面状态", "输出状态摘要"]
+    handle_dialogs: ["打开或复用页面", "检测并处理网页弹窗", "记录处理结果"]
+    explore_page_task: ["理解页面任务", "观察页面和可交互元素", "小步探索并观察反馈", "提取结果并记录成功路径"]
+    fallback: ["理解用户请求", "给出回复"]
+
+  memory_terms:
+    domain_terms:
+      - 草稿箱
+      - 草稿
+      - 标题
+      - 正文
+      - 内容
+      - 编辑
+      - 修改
+      - 删除
+      - 创建
+      - 发布
+      - 上传
+      - 图片
+      - 视频
+      - 首页
+      - 笔记管理
+      - 发帖
+      - 第一篇
+      - 最早
+      - 较早
+      - 时间更早
+      - 数量
+      - 详情
+      - 帖子
+      - 笔记
+      - 作品
+      - 文档
+    important_terms:
+      - 草稿箱
+      - 草稿
+      - 标题
+      - 正文
+      - 编辑
+      - 修改
+      - 删除
+      - 创建
+      - 上传
+      - 图片
+      - 视频
+      - 数量
+      - 详情
+    stop_chars: "的了我你他她它为把将当前这边那篇这篇一个一下多少几有请帮"
+
+  memory_review_prompt_template: |
+    你是小红书 Agent 的长期记忆审核器。
+
+    任务：
+    判断“当前成功请求”是否应该作为一条新的长期记忆写入。
+
+    判断标准：
+    - 如果当前请求和已有请求语义相同、只是措辞不同、标点不同、数量表达不同，should_add=false。
+    - 如果当前请求是已有请求的明显重复执行，也 should_add=false。
+    - 如果当前请求目标不同、操作对象不同、成功路径可能不同，should_add=true。
+    - 只比较请求语义，不要根据步骤判断。
+
+    已有长期记忆请求列表：
+    {existing_requests_json}
+
+    当前成功请求：
+    {user_request}
+
+    只输出 JSON：
+    {
+      "should_add": true,
+      "duplicate_request": "",
+      "reason": "简短说明"
+    }
+
+  next_suggestions:
+    idle: 下一步：等待用户提出任务。
+    failed_network: 下一步：先检查本机网络、代理或 DNS；如果浏览器里已有小红书页面，重新发起任务时 Agent 会优先复用现有页面。
+    failed_default: 下一步：根据错误信息调整参数或重新发起任务。
+    completed_default: 下一步：等待用户继续指令。
+    pending_template: 下一步：继续执行 {step}。
+    finishing: 下一步：整理任务结果。
+
+legacy_note_planner:
+  default_history_text: 暂无
+  default_planner_intro: 你是小红书创作中心自动化 Agent，目标是创建图文笔记草稿。
+  default_response_schema: '{"action": "wait", "element_index": null, "value": "", "reason": "", "expected_result": ""}'
+  prompt_template: |
+    {planner_intro}
+
+    当前 Agent 内部状态：
+    {state_text}
+
+    浏览器页面上下文：
+    {context_text}
+
+    当前页面可交互元素列表：
+    {elements_text}
+
+    最近执行历史：
+    {history_str}
+
+    {first_step_instruction}
+
+    任务目标：{task_description}
+
+    返回严格 JSON：
+    {response_schema}
+
+    规则：
+    {rules_text}
+
+note_publisher:
+  keywords:
+    stop_publish: ["发布", "提交", "确认发布", "立即发布"]
+    save_and_leave: ["暂存离开", "保存草稿", "存草稿"]
+    publish_entry: ["发布笔记", "开始发布", "创建笔记"]
+    image_entry: ["发布图文笔记", "图文笔记", "上传图文", "图片笔记"]
+    video_entry: ["上传视频", "视频笔记", "发布视频"]
+    upload: ["上传图片", "选择图片", "上传文件", "添加图片", "点击上传"]
+    video: ["上传视频", "视频大小", "视频格式", "mp4", "mov", "avi", "20GB", "4小时"]
+    title_fields: ["标题", "请输入标题", "填写标题"]
+    content_fields: ["正文", "内容", "描述", "分享", "空白正文编辑区"]
+    video_upload: ["上传视频", "选择视频", "上传文件", "点击上传"]
+    contenteditable_empty: ["空白正文编辑区"]
+    search_excludes: ["搜索"]
+    publish_entry_excludes: ["管理", "数据"]
+    image_upload_excludes: ["上传图文", "上传图片", "图片大小"]
+
+xhs_agent_skills:
+  site_selector_prompt_template: |
+    你是小红书账号 Agent 的页面选择器。请根据用户目标判断应该先在哪个网页会话里探索。
+
+    可选页面：
+    - creator：小红书创作中心 creator.xiaohongshu.com，用于新建草稿、编辑草稿、草稿箱、笔记管理、发布入口、数据看板等。
+    - web：小红书主站 www.xiaohongshu.com，用于个人主页、笔记详情、评论读取、评论回复、搜索、浏览帖子、点赞收藏等。
+    - current：继续使用当前已经打开的页面；当用户明确说“当前页面/当前这篇/这边”且无需切站时使用。
+
+    当前激活页面：{active_site}
+    已打开页面：
+    {page_sessions_json}
+
+    用户目标：
+    {user_goal}
+
+    只输出 JSON：
+    {"site":"creator|web|current","reason":"一句话原因"}
+
+  revise_prompts_prompt_template: |
+    你是图片生成提示词编辑器。请根据用户修改要求，重写当前提示词列表。
+
+    要求：
+    - 保持提示词数量不变，当前数量为 {prompt_count}。
+    - 每条提示词都必须能直接交给图片生成模型。
+    - 只输出 JSON 字符串数组，不要 Markdown，不要解释。
+
+    用户修改要求：
+    {revision_instruction}
+
+    当前提示词：
+    {current_prompts_json}
+
+browser_skills:
+  upload_modes:
+    image_entry_texts: ["上传图文", "图文", "发布图文笔记"]
+    video_entry_texts: ["上传视频", "视频"]
+
+  file_input_detection:
+    image_near_terms: ["上传图文", "上传图片", "选择图片", "添加图片", "图片"]
+    video_near_terms: ["上传视频", "视频大小", "mp4", "mov", "avi"]
+
+  upload_done_signals:
+    image: ["上传成功", "上传完成", "重新上传", "删除", "封面", "下一步", "填写标题", "标题"]
+    video: ["上传成功", "上传完成", "处理中", "转码", "重新上传", "删除", "封面", "标题", "填写标题"]
+
+  upload_dialog:
+    safe_texts: ["完成", "确定", "确认", "下一步", "保存", "我知道了"]
+    dangerous_texts: ["发布", "提交", "确认发布", "立即发布"]
+
+  save_and_leave:
+    target_text: 暂存离开
+    intent: save_draft
+    event_names: ["save"]
+    avoid_texts: ["发布", "立即发布", "确认发布", "提交"]
+    save_words: ["暂存离开", "暂存并离开", "保存草稿", "存草稿", "保存并离开", "离开并保存"]
+    publish_words: ["发布", "立即发布", "确认发布"]
+    danger_words: ["发布", "提交", "立即发布", "确认发布"]
+    candidate_terms: ["暂存", "草稿", "离开"]
+
+element_extractor:
+  priority_words:
+    - 草稿箱
+    - 草稿
+    - 暂存离开
+    - 暂存并离开
+    - 保存草稿
+    - 存草稿
+    - 保存并离开
+    - 离开并保存
+
+image_prompt_agent:
+  default_system_prompt: 你是一名专业的电商视觉提示词工程师。

@@ -10,42 +10,22 @@ from typing import Any
 from openai import OpenAI
 
 from cfg.model_config import MODEL_CONFIG
-from src.browser_skills import (
-    click_by_index,
-    click_save_and_leave,
-    click_semantic_target,
-    click_text_in_element,
-    fill_by_index,
-    fill_content_direct,
-    fill_title_direct,
-    go_back,
-)
 from src.browser_state_observer import (
     observe_browser_state,
     summarize_browser_state,
     wait_for_browser_feedback,
 )
 from src.element_extractor import extract_interactive_elements
+from src.page_context import PageContextManager
+from src.page_tool_registry import PAGE_TOOL_REGISTRY, PageToolContext
+from src.prompt_config import get_prompt_config, get_prompt_list, render_prompt_template
 from src.system_dialog_observer import close_native_dialog_with_escape, get_native_dialog_state
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPLORATION_MEMORY_PATH = PROJECT_ROOT / "agent_memory" / "xhs_exploration_memory.json"
 EXPLORATION_TRACE_PATH = PROJECT_ROOT / "agent_memory" / "xhs_exploration_trace.jsonl"
-VALID_ACTIONS = {
-    "click",
-    "click_semantic_target",
-    "click_text_in_element",
-    "fill",
-    "fill_title",
-    "fill_content",
-    "save_and_leave",
-    "back",
-    "wait",
-    "extract_answer",
-    "done",
-    "fail",
-}
+VALID_ACTIONS = set(PAGE_TOOL_REGISTRY.names())
 
 
 @dataclass
@@ -152,21 +132,7 @@ def _debug_response(label: str, response, raw_text: str):
 
 
 def _is_valid_action(action: Any) -> bool:
-    if not isinstance(action, dict) or action.get("action") not in VALID_ACTIONS:
-        return False
-    if action["action"] == "click" and action.get("element_index") is None:
-        return False
-    if action["action"] == "click_semantic_target" and not (action.get("text") or action.get("value")):
-        return False
-    if action["action"] == "click_text_in_element" and (
-        action.get("element_index") is None or not (action.get("text") or action.get("value"))
-    ):
-        return False
-    if action["action"] == "fill" and (action.get("element_index") is None or action.get("value") is None):
-        return False
-    if action["action"] in {"fill_title", "fill_content"} and action.get("value") is None:
-        return False
-    return True
+    return PAGE_TOOL_REGISTRY.validate(action)
 
 
 class ExplorationMemory:
@@ -293,6 +259,7 @@ class XhsPageExplorer:
     def __init__(self, memory: ExplorationMemory | None = None):
         self.memory = memory or ExplorationMemory()
         self.trace = ExplorationTrace()
+        self.page_context = PageContextManager()
 
     def _history_lessons(self, history: list[ExplorationStep]) -> list[str]:
         lessons = []
@@ -321,19 +288,30 @@ class XhsPageExplorer:
         )
         combined = f"{url} {text} {field_hints} {semantic_hints}"
 
-        if "标题" in combined and ("正文" in combined or "发布" in combined or "暂存离开" in combined):
-            return "note_editing"
-        if "草稿箱(" in combined or "草稿箱（" in combined:
-            return "publish_entry_with_drafts"
-        if all(word in combined for word in ("全部", "已发布", "审核中")) and "笔记管理" in combined:
-            return "note_management"
-        if "草稿箱中有未发布的作品" in combined or "新的创作" in combined:
-            return "creator_home"
-        if "拖拽视频" in combined or "上传图文" in combined or "上传视频" in combined:
-            return "publish_entry"
-        if "creator.xiaohongshu.com" in url:
-            return "creator_unknown"
-        return "unknown"
+        for rule in get_prompt_list("page_phase", "rules"):
+            if self._phase_rule_matches(rule, url, combined):
+                return str(rule.get("name") or get_prompt_config("page_phase", "default", default="unknown"))
+        return str(get_prompt_config("page_phase", "default", default="unknown"))
+
+    def _phase_rule_matches(self, rule: dict, url: str, combined: str) -> bool:
+        if not isinstance(rule, dict):
+            return False
+        url_contains = rule.get("url_contains")
+        if url_contains:
+            values = url_contains if isinstance(url_contains, list) else [url_contains]
+            if not any(str(value) in url for value in values):
+                return False
+        all_terms = [str(value) for value in rule.get("all_terms") or []]
+        if all_terms and not all(term in combined for term in all_terms):
+            return False
+        any_terms = [str(value) for value in rule.get("any_terms") or []]
+        if any_terms and not any(term in combined for term in any_terms):
+            return False
+        for group in rule.get("any_groups") or []:
+            terms = [str(value) for value in group]
+            if terms and not any(term in combined for term in terms):
+                return False
+        return True
 
     async def _page_snapshot(self, page, elements: list[dict], state: dict) -> dict:
         dom = await page.evaluate(
@@ -448,15 +426,63 @@ class XhsPageExplorer:
                         value: (el.value || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 1200)
                     }))
                     .slice(0, 20);
-                return {text, fields, semanticTargets};
+                const mediaSelector = [
+                    'img',
+                    'video',
+                    'canvas',
+                    '[role="img"]',
+                    '[class*="cover"]',
+                    '[class*="Cover"]',
+                    '[class*="image"]',
+                    '[class*="Image"]',
+                    '[class*="img"]',
+                    '[class*="Img"]',
+                    '[class*="thumb"]',
+                    '[class*="Thumb"]',
+                    '[style*="background-image"]'
+                ].join(',');
+                const mediaTargets = Array.from(document.querySelectorAll(mediaSelector))
+                    .filter(el => {
+                        const rect = el.getBoundingClientRect();
+                        const style = window.getComputedStyle(el);
+                        return rect.width > 20 && rect.height > 20
+                            && style.display !== 'none'
+                            && style.visibility !== 'hidden'
+                            && style.opacity !== '0';
+                    })
+                    .map(el => {
+                        const rect = el.getBoundingClientRect();
+                        const nearText = normalize(
+                            el.closest('article,li,[class*="comment"],[class*="Comment"],[class*="card"],[class*="Card"],[class*="item"],[class*="Item"],section,div')
+                                ?.innerText || ''
+                        );
+                        return {
+                            tag: el.tagName.toLowerCase(),
+                            alt: normalize(el.getAttribute('alt') || ''),
+                            title: normalize(el.getAttribute('title') || ''),
+                            class_name: String(el.className || '').slice(0, 120),
+                            near_text: nearText.slice(0, 220),
+                            rect: {
+                                x: Math.round(rect.x),
+                                y: Math.round(rect.y),
+                                width: Math.round(rect.width),
+                                height: Math.round(rect.height)
+                            }
+                        };
+                    })
+                    .filter(item => item.near_text || item.alt || item.title || /cover|image|img|thumb/i.test(item.class_name))
+                    .slice(0, 50);
+                return {text, fields, semanticTargets, mediaTargets};
             }"""
         )
         snapshot = {
             "url": page.url,
+            "site": "creator" if "creator.xiaohongshu.com" in page.url else "web" if "www.xiaohongshu.com" in page.url else "unknown",
             "browser_state": summarize_browser_state(state),
             "visible_text": _compact_text(dom.get("text", ""), 2600),
             "fields": dom.get("fields", []),
             "semantic_targets": dom.get("semanticTargets", []),
+            "media_targets": dom.get("mediaTargets", []),
             "element_count": len(elements),
             "elements": [
                 {
@@ -480,91 +506,20 @@ class XhsPageExplorer:
         trace_notes: list[dict],
         worklog_hints: list[dict],
     ) -> str:
-        return f"""
-你是小红书创作中心的页面探索 Agent。你不是固定流程脚本，而是在网页里像人一样观察、尝试、返回、复盘。
-
-用户目标：
-{user_goal}
-
-你可以选择的动作：
-- click: 点击一个可交互元素，必须给 element_index
-- click_semantic_target: 按目标文字/语义深度点击，不需要 element_index；当按钮文字可能藏在 semantic_targets、自定义组件属性、Shadow DOM、固定底部工具条或没有被元素提取器列出时使用，必须由你自己填写 text，可选 intent 和 avoid_texts
-- click_text_in_element: 点击某个元素内部的指定文字，必须给 element_index 和 text；当目标按钮文字在卡片/列表项内部但没有独立元素索引时使用，例如点击第三篇草稿卡片里的“删除”
-- fill: 填写一个输入元素，必须给 element_index 和 value
-- fill_title: 修改当前编辑页标题，必须给 value；当用户明确要修改标题时优先使用
-- fill_content: 修改当前编辑页正文，必须给 value；当用户明确要修改正文时优先使用
-- save_and_leave: 保存当前草稿并暂存离开；当用户要求“保存草稿/暂存离开/存草稿/保存并回到首页”，且当前是笔记编辑页时使用；不需要 element_index
-- back: 返回上一页
-- wait: 等待页面加载或响应
-- extract_answer: 当前页面已经包含用户要的信息，提取并返回 answer；这类完成动作必须同时返回 next_suggestion
-- done: 任务已完成，返回 answer；这类完成动作必须同时返回 next_suggestion
-- fail: 多次探索仍无法完成，说明原因
-
-行为规则：
-- 如果任务没有现成 skill，要先观察页面文字和可交互元素，按最可能路径小步探索。
-- 不要连续重复点击同一个无响应元素；无进展时优先换路径或 back。
-- 如果用户要“较早/最早”的草稿，通常需要进入草稿箱/笔记管理/发布入口后比较列表顺序或时间信息。
-- 如果用户要正文内容，打开目标草稿后优先从正文编辑框、contenteditable 或页面字段中提取。
-- 如果用户要修改标题，且当前 page_phase=note_editing，优先使用 fill_title，不要对侧边栏或页面容器使用 fill。
-- 如果用户要修改正文，且当前 page_phase=note_editing，优先使用 fill_content，不要对标题框或页面容器使用 fill。
-- 如果用户要保存当前草稿、暂存离开、保存并回到首页，且当前 page_phase=note_editing，优先返回 save_and_leave。不要因为可交互元素列表里没有“暂存离开”就输出分析文字或 fail；这个按钮由专用工具处理。
-- save_and_leave 是保存草稿，不是正式发布；requires_user_confirmation 通常为 false。除非页面显示会覆盖/删除内容，否则不要要求用户确认。
-- 如果目标按钮在可交互元素列表中不可见，但 visible_text、semantic_targets、组件属性或用户目标明确存在该操作，可以使用 click_semantic_target。text 必须由你根据当前页面感知自行填写，不要要求用户提供。例如 semantic_targets 里出现 save-text="暂存离开" 时，可以返回 text="暂存离开" intent="save_draft" avoid_texts=["发布","立即发布"]。
-- 如果 semantic_targets 中有多个相近按钮文本，必须结合用户目标选择最贴近的 text，并用 avoid_texts 排除危险或相反语义文本，例如保存草稿时排除“发布”，删除确认时排除“取消”。
-- click_semantic_target 是通用深度点击工具，不是自动兜底；只有你明确判断需要点击该语义目标时才使用。
-- 如果用户目标涉及删除、移除、清空、撤回：必须先定位与用户描述匹配的目标对象；不要删除不匹配对象；如果页面出现二次确认弹窗，只有在目标对象明确匹配时才点击确认。
-- 如果用户要求删除“保存于某个时间”的帖子/草稿/笔记，要把保存时间视为目标对象的唯一定位线索：先找到包含该保存时间的那条记录，再选择该记录对应的删除按钮；如果当前还没看到记录列表，先进入草稿箱/图文笔记列表。
-- 如果某篇草稿/帖子作为一个整体卡片元素出现，且卡片文本里包含“编辑/删除”，但“删除”没有单独元素索引，使用 click_text_in_element，element_index 取目标卡片索引，text 取“删除”。
-- 你必须为每个动作判断是否需要用户确认，并返回 requires_user_confirmation。
-- 当动作会删除、移除、清空、撤回、发布、确认删除、覆盖重要内容或造成不可逆影响时，requires_user_confirmation 必须为 true，并写清 confirmation_message。
-- 普通查看、进入页面、打开草稿箱、切换 tab、读取信息、无风险等待等动作，requires_user_confirmation 应为 false。
-- 程序会根据 requires_user_confirmation 询问用户 y/n；用户拒绝时不会执行该动作。
-- 必须参考“本地行动记忆”。如果里面记录某个动作没有达到目标，不要重复同一路径；如果某个动作暴露了目标线索，优先沿着那个线索继续。
-- 必须参考“来自 xhs_agent_worklog.json 的历史成功经验”中的 user_request、reuse_level、match_score、request_match_ratio、request_overlap_terms、match_ratio 和 overlap_terms。user_request 是当时用户的原始请求；复用前必须先判断它和当前用户目标是否语义一致或高度相关。
-- reuse_level=same_goal_candidate 时，可以把 steps 当作已验证路线优先参考；reuse_level=context_reference_only 或 weak_context_only 时，只能把它当作页面路径/线索，不能照搬最终动作。
-- 如果历史 user_request 只是共享了少量词汇，但目标不同，不要照搬它的步骤；如果语义一致，可以把 steps 当作已验证路线来优先参考。
-- 成功完成后用 done 或 extract_answer，不要继续乱点。
-- 只有当 action 是 done 或 extract_answer 时，才返回 next_suggestion；next_suggestion 要根据当前页面信息、用户目标和任务结果，给用户一个自然、具体、可继续交流的下一步建议。
-- 其他中间探索动作的 next_suggestion 必须为空字符串。
-- 只输出 JSON，不要 Markdown。
-- 严禁输出思考过程、分析文字、解释文字；回复的第一个字符必须是 {{，最后一个字符必须是 }}。
-
-JSON 格式：
-{{
-  "action": "click|click_semantic_target|click_text_in_element|fill|fill_title|fill_content|save_and_leave|back|wait|extract_answer|done|fail",
-  "element_index": 0,
-  "text": "",
-  "intent": "",
-  "avoid_texts": [],
-  "event_names": [],
-  "value": "",
-  "answer": "",
-  "next_suggestion": "",
-  "requires_user_confirmation": false,
-  "confirmation_message": "",
-  "reason": "为什么这样做"
-}}
-
-历史动作：
-{json.dumps([asdict(step) for step in history[-8:]], ensure_ascii=False, indent=2)}
-
-本轮已尝试路径摘要：
-{json.dumps(self._history_lessons(history), ensure_ascii=False, indent=2)}
-
-可复用的历史成功路径：
-{json.dumps(memory_hits, ensure_ascii=False, indent=2)}
-
-本地行动记忆（动作后的页面响应摘要）：
-{json.dumps(trace_notes[-12:], ensure_ascii=False, indent=2)}
-
-来自 xhs_agent_worklog.json 的历史成功经验：
-{json.dumps(worklog_hints[-6:], ensure_ascii=False, indent=2)}
-先比较每条历史经验的 user_request 与当前用户目标是否同义或高度相关，再决定是否复用；不要因为 overlap_terms 有重合就盲目复用。
-reuse_level=same_goal_candidate 才表示可能是同类任务；context_reference_only/weak_context_only 只能作为页面路径线索。
-
-当前页面快照：
-{json.dumps(snapshot, ensure_ascii=False, indent=2)}
-""".strip()
+        template = str(get_prompt_config("page_explorer", "planner_prompt_template", default=""))
+        return render_prompt_template(
+            template,
+            user_goal=user_goal,
+            tool_catalog=PAGE_TOOL_REGISTRY.render_prompt_catalog(),
+            json_rules=PAGE_TOOL_REGISTRY.render_json_rules(),
+            history_json=json.dumps([asdict(step) for step in history[-8:]], ensure_ascii=False, indent=2),
+            history_lessons_json=json.dumps(self._history_lessons(history), ensure_ascii=False, indent=2),
+            memory_hits_json=json.dumps(memory_hits, ensure_ascii=False, indent=2),
+            trace_notes_json=json.dumps(trace_notes[-12:], ensure_ascii=False, indent=2),
+            worklog_hints_json=json.dumps(worklog_hints[-6:], ensure_ascii=False, indent=2),
+            snapshot_json=json.dumps(snapshot, ensure_ascii=False, indent=2),
+            page_context=self.page_context.render(),
+        )
 
     def _print_snapshot_debug(self, snapshot: dict):
         print(
@@ -584,6 +539,13 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
             for item in semantic_targets[:20]:
                 text = _compact_text(item.get("text") or item.get("attrs") or "", 120)
                 print(f"  [{item.get('tag')}] {text}", flush=True)
+        media_targets = snapshot.get("media_targets") or []
+        if media_targets:
+            print("页面媒体目标预览（前12个）：", flush=True)
+            for item in media_targets[:12]:
+                text = _compact_text(item.get("near_text") or item.get("alt") or item.get("title") or "", 140)
+                rect = item.get("rect") or {}
+                print(f"  [{item.get('tag')}] {text} rect={rect}", flush=True)
         print("当前可交互元素预览（前40个）：", flush=True)
         for item in (snapshot.get("elements") or [])[:40]:
             text = _compact_text(item.get("text") or item.get("desc") or "", 120)
@@ -602,7 +564,7 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
         response = _client().chat.completions.create(
             model=MODEL_CONFIG.get("planner_model", MODEL_CONFIG.get("content_model")),
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=MODEL_CONFIG.get("planner_max_tokens", 1000),
+            max_tokens=max(int(MODEL_CONFIG.get("planner_max_tokens", 1000)), 1600),
             temperature=MODEL_CONFIG.get("planner_temperature", 0.1),
         )
         raw_text = _extract_response_text(response)
@@ -638,6 +600,16 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
                     "attrs": _compact_text(item.get("attrs", ""), 160),
                 }
                 for item in (snapshot.get("semantic_targets") or [])[:12]
+            ],
+            "media_targets": [
+                {
+                    "tag": item.get("tag", ""),
+                    "near_text": _compact_text(item.get("near_text", ""), 180),
+                    "alt": _compact_text(item.get("alt", ""), 80),
+                    "title": _compact_text(item.get("title", ""), 80),
+                    "rect": item.get("rect", {}),
+                }
+                for item in (snapshot.get("media_targets") or [])[:12]
             ],
             "elements": [
                 f"{item.get('index')}: {item.get('text') or item.get('desc')}"
@@ -677,12 +649,14 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
         return json.dumps(
             {
                 "user_goal": user_goal,
-                "url": snapshot.get("url", ""),
-                "page_phase": snapshot.get("page_phase", ""),
+            "url": snapshot.get("url", ""),
+            "site": snapshot.get("site", ""),
+            "page_phase": snapshot.get("page_phase", ""),
                 "browser_state": snapshot.get("browser_state", ""),
                 "visible_text": _compact_text(snapshot.get("visible_text", ""), 1800),
                 "fields": snapshot.get("fields", [])[:12],
                 "semantic_targets": snapshot.get("semantic_targets", [])[:40],
+                "media_targets": snapshot.get("media_targets", [])[:30],
                 "interactive_elements": elements,
                 "recent_actions": [asdict(step) for step in history[-6:]],
                 "recent_action_summaries": trace_notes[-8:],
@@ -701,25 +675,16 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
         before_snapshot: dict,
         after_snapshot: dict,
     ) -> str:
-        prompt = f"""
-你是网页探索日志压缩器。请总结这一步动作对完成用户目标是否有帮助。
-
-要求：
-- 输出 1 到 3 句中文。
-- 必须说明：点了什么、页面发生了什么、下一步应避免或利用什么。
-- 不要泛泛而谈，不要超过 180 字。
-
-用户目标：{user_goal}
-动作：{json.dumps(action, ensure_ascii=False)}
-点击/填写对象：{element_text}
-执行结果：{result}
-
-动作前页面摘要：
-{json.dumps(self._snapshot_brief(before_snapshot), ensure_ascii=False, indent=2)}
-
-动作后页面摘要：
-{json.dumps(self._snapshot_brief(after_snapshot), ensure_ascii=False, indent=2)}
-""".strip()
+        template = str(get_prompt_config("page_explorer", "transition_summary_prompt_template", default=""))
+        prompt = render_prompt_template(
+            template,
+            user_goal=user_goal,
+            action_json=json.dumps(action, ensure_ascii=False),
+            element_text=element_text,
+            result=result,
+            before_snapshot_json=json.dumps(self._snapshot_brief(before_snapshot), ensure_ascii=False, indent=2),
+            after_snapshot_json=json.dumps(self._snapshot_brief(after_snapshot), ensure_ascii=False, indent=2),
+        )
         try:
             response = _client().chat.completions.create(
                 model=MODEL_CONFIG.get("formatter_model") or MODEL_CONFIG.get("content_model"),
@@ -746,6 +711,7 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
         user_goal: str,
         max_steps: int = 12,
         worklog_hints: list[dict] | None = None,
+        switch_page=None,
     ) -> dict:
         self.trace.clear()
         history: list[ExplorationStep] = []
@@ -754,6 +720,7 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
         worklog_hints = worklog_hints or []
         last_action_key = ""
         repeated_no_response = 0
+        self.page_context.reset(user_goal)
 
         for step_index in range(1, max_steps + 1):
             state = await observe_browser_state(page)
@@ -798,6 +765,7 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
 
             elements = await extract_interactive_elements(page, max_retries=1)
             snapshot = await self._page_snapshot(page, elements, state)
+            self.page_context.apply_snapshot(snapshot)
             self._print_snapshot_debug(snapshot)
             action = await self._plan_action(user_goal, snapshot, history, memory_hits, trace_notes, worklog_hints)
             action_name = action.get("action")
@@ -807,6 +775,14 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
             if action_name in {"done", "extract_answer"}:
                 answer = action.get("answer") or snapshot.get("visible_text", "")
                 next_suggestion = _compact_text(action.get("next_suggestion") or "", 260)
+                self.page_context.update(
+                    user_goal=user_goal,
+                    action=action,
+                    result=answer,
+                    observation="任务完成或已提取答案。",
+                    before_snapshot=snapshot,
+                    after_snapshot=snapshot,
+                )
                 self.memory.add(user_goal, answer, history)
                 return {
                     "success": True,
@@ -816,6 +792,14 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
                 }
 
             if action_name == "fail":
+                self.page_context.update(
+                    user_goal=user_goal,
+                    action=action,
+                    result=action.get("answer") or reason or "探索失败",
+                    observation="页面探索模型判断任务失败。",
+                    before_snapshot=snapshot,
+                    after_snapshot=snapshot,
+                )
                 return {
                     "success": False,
                     "answer": action.get("answer") or reason or "探索失败",
@@ -861,68 +845,12 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
             )
 
             try:
-                if action_name == "click":
-                    index = action.get("element_index")
-                    if index is None or int(index) >= len(elements):
-                        result = "点击索引无效"
-                    else:
-                        element = elements[int(index)]
-                        element_text = element.get("text") or element.get("desc") or ""
-                        await click_by_index(page, int(index), elements)
-                        result = f"已点击 {element_text}"
-                elif action_name == "click_semantic_target":
-                    target_text = action.get("text") or action.get("value") or ""
-                    element_text = f"语义目标：{target_text}"
-                    success = await click_semantic_target(
-                        page,
-                        target_text,
-                        intent=action.get("intent", ""),
-                        avoid_texts=action.get("avoid_texts") or [],
-                        event_names=action.get("event_names") or [],
-                    )
-                    result = f"{'已点击语义目标' if success else '语义目标点击失败'}：{target_text}"
-                elif action_name == "click_text_in_element":
-                    index = action.get("element_index")
-                    target_text = action.get("text") or action.get("value") or ""
-                    if index is None or int(index) >= len(elements):
-                        result = "内部文本点击索引无效"
-                    else:
-                        element = elements[int(index)]
-                        element_text = element.get("text") or element.get("desc") or ""
-                        await click_text_in_element(page, int(index), target_text, elements)
-                        result = f"已点击 {element_text} 内部文本：{target_text}"
-                elif action_name == "fill_title":
-                    value = action.get("value", "")
-                    element_text = "标题输入框"
-                    success = await fill_title_direct(page, value)
-                    result = f"{'已修改标题' if success else '标题修改失败'}：{value}"
-                elif action_name == "fill_content":
-                    value = action.get("value", "")
-                    element_text = "正文编辑区"
-                    success = await fill_content_direct(page, value)
-                    result = f"{'已修改正文' if success else '正文修改失败'}"
-                elif action_name == "fill":
-                    index = action.get("element_index")
-                    value = action.get("value", "")
-                    if index is None or int(index) >= len(elements):
-                        result = "填写索引无效"
-                    else:
-                        element = elements[int(index)]
-                        element_text = element.get("text") or element.get("desc") or ""
-                        await fill_by_index(page, int(index), value, elements)
-                        result = f"已填写 {element_text}"
-                elif action_name == "save_and_leave":
-                    element_text = "暂存离开/保存草稿专用工具"
-                    success = await click_save_and_leave(page)
-                    result = "已执行暂存离开，草稿已保存" if success else "暂存离开工具未找到可点击的保存按钮"
-                elif action_name == "back":
-                    await go_back(page)
-                    result = "已返回上一页"
-                elif action_name == "wait":
-                    await asyncio.sleep(float(action.get("seconds") or 1.5))
-                    result = "已等待"
-                else:
-                    result = f"未知动作 {action_name}"
+                tool_context = PageToolContext(page=page, elements=elements, switch_page=switch_page)
+                tool_result = await PAGE_TOOL_REGISTRY.execute(action_name, tool_context, action)
+                result = tool_result.message
+                element_text = tool_result.element_text
+                if tool_result.page is not None:
+                    page = tool_result.page
             except Exception as exc:
                 result = f"动作执行失败：{exc}"
 
@@ -960,6 +888,14 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
                 before_snapshot=before_snapshot,
                 after_snapshot=after_snapshot,
             )
+            self.page_context.update(
+                user_goal=user_goal,
+                action=action,
+                result=result,
+                observation=observation,
+                before_snapshot=before_snapshot,
+                after_snapshot=after_snapshot,
+            )
 
             if action_key == last_action_key and response_status == "no_visible_response":
                 repeated_no_response += 1
@@ -991,6 +927,7 @@ reuse_level=same_goal_candidate 才表示可能是同类任务；context_referen
             trace_notes.append(trace_entry)
             trace_notes = trace_notes[-12:]
             print(f"动作效果摘要：{observation}")
+            print(f"page_context 摘要：{self.page_context.brief()}")
 
             if repeated_no_response >= 1:
                 print("探索检测到重复无响应，下一步会让模型换路径或返回。")

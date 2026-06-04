@@ -15,12 +15,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from cfg.model_config import MODEL_CONFIG
 from src.agent_note_publisher import agent_create_note_draft
-from src.browser_actions import open_creator_home
+from src.browser_actions import open_creator_home, open_xhs_home
 from src.browser_skills import close_upload_dialog_if_present
 from src.browser_state_observer import observe_browser_state, summarize_browser_state
 from src.image_generation_agent import generate_or_edit_image_from_config
 from src.image_prompt_agent import generate_image_prompts_from_image
 from src.llm_planner import generate_note_text_from_image_prompts, get_note_task_inputs
+from src.prompt_config import get_prompt_config, render_prompt_template
 from src.task_config_loader import get_active_image_prompt_pipeline_config
 from src.xhs_page_explorer import XhsPageExplorer
 
@@ -58,10 +59,8 @@ class XhsAgentMemory:
     generated_images: list[str] = field(default_factory=list)
     last_note_title: str = ""
     last_note_content: str = ""
-    page: object | None = None
-    browser: object | None = None
-    context: object | None = None
-    playwright: object | None = None
+    active_site: str = "creator"
+    page_sessions: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 class XhsAgentSkills:
@@ -71,16 +70,127 @@ class XhsAgentSkills:
         self.memory = XhsAgentMemory()
         self.explorer = XhsPageExplorer()
 
+    def _normalize_site(self, site: str | None) -> str:
+        text = (site or "").strip().lower()
+        site_aliases = {
+            "creator": "creator",
+            "creator_center": "creator",
+            "creator_home": "creator",
+            "publish": "creator",
+            "studio": "creator",
+            "创作中心": "creator",
+            "后台": "creator",
+            "发布中心": "creator",
+            "web": "web",
+            "main": "web",
+            "main_site": "web",
+            "home": "web",
+            "xhs_web": "web",
+            "xhs_home": "web",
+            "xhs": "web",
+            "www": "web",
+            "xiaohongshu": "web",
+            "小红书主页": "web",
+            "小红书主站": "web",
+            "主站": "web",
+            "个人主页": "web",
+            "评论区": "web",
+            "首页": "web",
+        }
+        if text in {"current", "当前", ""}:
+            return self.memory.active_site or "creator"
+        return site_aliases.get(text, "creator")
+
+    def _site_label(self, site: str) -> str:
+        return "小红书创作中心" if site == "creator" else "小红书主站"
+
+    def _session(self, site: str) -> dict[str, object]:
+        return self.memory.page_sessions.setdefault(site, {})
+
+    def _live_page(self, site: str):
+        page = self._session(site).get("page")
+        if page is not None and not page.is_closed():
+            return page
+        return None
+
+    async def _open_site_page(self, site: str):
+        site = self._normalize_site(site)
+        page = self._live_page(site)
+        if page is not None:
+            self.memory.active_site = site
+            return page
+
+        if site == "web":
+            page, browser, context, playwright = await open_xhs_home(headless=False, persistent=True)
+        else:
+            page, browser, context, playwright = await open_creator_home(headless=False, persistent=True)
+            site = "creator"
+
+        self.memory.page_sessions[site] = {
+            "page": page,
+            "browser": browser,
+            "context": context,
+            "playwright": playwright,
+        }
+        self.memory.active_site = site
+        return page
+
+    def _page_session_summary(self) -> list[dict]:
+        summaries = []
+        for site, session in self.memory.page_sessions.items():
+            page = session.get("page")
+            if page is None:
+                continue
+            summaries.append(
+                {
+                    "site": site,
+                    "label": self._site_label(site),
+                    "open": not page.is_closed(),
+                    "url": "" if page.is_closed() else page.url,
+                }
+            )
+        return summaries
+
+    async def _choose_site_for_goal(self, user_goal: str, target_site: str | None = None) -> str:
+        if target_site:
+            return self._normalize_site(target_site)
+
+        prompt = render_prompt_template(
+            str(get_prompt_config("xhs_agent_skills", "site_selector_prompt_template", default="")),
+            active_site=self.memory.active_site,
+            page_sessions_json=json.dumps(self._page_session_summary(), ensure_ascii=False, indent=2),
+            user_goal=user_goal,
+        )
+        try:
+            response = _text_client().chat.completions.create(
+                model=MODEL_CONFIG.get("planner_model", MODEL_CONFIG.get("content_model")),
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=300,
+                temperature=MODEL_CONFIG.get("planner_temperature", 0.1),
+            )
+            parsed = _extract_json(response.choices[0].message.content or "")
+            if isinstance(parsed, dict):
+                return self._normalize_site(parsed.get("site"))
+        except Exception as exc:
+            print(f"页面选择模型暂不可用，继续使用当前页面：{exc}")
+        return self._normalize_site("current")
+
     def _pipeline_config(self) -> dict:
         return get_active_image_prompt_pipeline_config()
 
     def show_memory(self) -> str:
+        page_summaries = self._page_session_summary()
+        page_text = "\n".join(
+            f"  - {item['site']}({item['label']}): open={item['open']} url={item['url']}"
+            for item in page_summaries
+        ) or "  - 尚未打开页面"
         return (
             f"当前记忆：\n"
             f"- prompts: {len(self.memory.generated_prompts)} 条\n"
             f"- images: {len(self.memory.generated_images)} 张\n"
             f"- title: {self.memory.last_note_title or '未生成'}\n"
-            f"- page_open: {self.memory.page is not None and not self.memory.page.is_closed() if self.memory.page else False}"
+            f"- active_site: {self.memory.active_site}\n"
+            f"- pages:\n{page_text}"
         )
 
     def generate_prompts(
@@ -114,20 +224,12 @@ class XhsAgentSkills:
         if not self.memory.generated_prompts:
             raise ValueError("当前还没有可修改的图片提示词，请先生成提示词。")
 
-        prompt = f"""
-你是图片生成提示词编辑器。请根据用户修改要求，重写当前提示词列表。
-
-要求：
-- 保持提示词数量不变，当前数量为 {len(self.memory.generated_prompts)}。
-- 每条提示词都必须能直接交给图片生成模型。
-- 只输出 JSON 字符串数组，不要 Markdown，不要解释。
-
-用户修改要求：
-{revision_instruction}
-
-当前提示词：
-{json.dumps(self.memory.generated_prompts, ensure_ascii=False, indent=2)}
-""".strip()
+        prompt = render_prompt_template(
+            str(get_prompt_config("xhs_agent_skills", "revise_prompts_prompt_template", default="")),
+            prompt_count=len(self.memory.generated_prompts),
+            revision_instruction=revision_instruction,
+            current_prompts_json=json.dumps(self.memory.generated_prompts, ensure_ascii=False, indent=2),
+        )
 
         client = _text_client()
         response = client.chat.completions.create(
@@ -185,18 +287,26 @@ class XhsAgentSkills:
 
     async def open_creator_page(self):
         """打开小红书创作中心，并把 page 保存在会话记忆里。"""
-        if self.memory.page and not self.memory.page.is_closed():
-            return self.memory.page
-        page, browser, context, playwright = await open_creator_home(headless=False)
-        self.memory.page = page
-        self.memory.browser = browser
-        self.memory.context = context
-        self.memory.playwright = playwright
+        return await self._open_site_page("creator")
+
+    async def open_xhs_page(self):
+        """打开小红书主站，并把 page 保存在会话记忆里。"""
+        return await self._open_site_page("web")
+
+    async def open_page(self, site: str | None = None):
+        """打开或复用指定站点页面。site 可为 creator/web/current。"""
+        return await self._open_site_page(self._normalize_site(site))
+
+    async def switch_page(self, target_site: str):
+        """给页面探索器使用的跨站点切换入口。"""
+        site = self._normalize_site(target_site)
+        page = await self._open_site_page(site)
+        print(f"已切换到{self._site_label(site)}：{page.url}")
         return page
 
     async def get_page_state(self) -> dict:
         """获取当前已打开页面的状态。"""
-        page = await self.open_creator_page()
+        page = await self.open_page("current")
         state = await observe_browser_state(page)
         print(summarize_browser_state(state))
         return state
@@ -258,14 +368,18 @@ class XhsAgentSkills:
         user_goal: str,
         max_steps: int = 12,
         worklog_hints: list[dict] | None = None,
+        target_site: str | None = None,
     ) -> dict:
         """对没有固定 skill 的页面任务进行自主探索，并沉淀成功路径。"""
-        page = await self.open_creator_page()
+        site = await self._choose_site_for_goal(user_goal, target_site=target_site)
+        page = await self.open_page(site)
+        print(f"页面探索起点：{self._site_label(self.memory.active_site)} -> {page.url}")
         result = await self.explorer.explore(
             page,
             user_goal=user_goal,
             max_steps=max_steps,
             worklog_hints=worklog_hints or [],
+            switch_page=self.switch_page,
         )
         if result.get("success"):
             print("探索任务完成：")
@@ -280,7 +394,7 @@ class XhsAgentSkills:
 
     async def handle_page_dialogs(self) -> bool:
         """尝试处理网页弹窗/上传收尾弹窗。"""
-        page = await self.open_creator_page()
+        page = await self.open_page("current")
         handled = await close_upload_dialog_if_present(page)
         print(f"弹窗处理结果：{handled}")
         return handled
@@ -315,11 +429,11 @@ class XhsAgentSkills:
         )
 
     async def close(self):
-        if self.memory.browser:
-            await self.memory.browser.close()
-        if self.memory.playwright:
-            await self.memory.playwright.stop()
-        self.memory.page = None
-        self.memory.browser = None
-        self.memory.context = None
-        self.memory.playwright = None
+        for session in list(self.memory.page_sessions.values()):
+            browser = session.get("browser")
+            playwright = session.get("playwright")
+            if browser:
+                await browser.close()
+            if playwright:
+                await playwright.stop()
+        self.memory.page_sessions.clear()

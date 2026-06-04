@@ -3,6 +3,8 @@ import asyncio
 
 from playwright.async_api import Error as PlaywrightError
 
+from src.prompt_config import get_prompt_list
+
 
 async def extract_interactive_elements(page, max_retries=3):
     """
@@ -38,7 +40,7 @@ async def _do_extract(page):
     """从当前页面提取可见、可操作或可填写的节点，并为节点写入稳定临时选择器。"""
     await page.wait_for_load_state("domcontentloaded", timeout=10000)
     elements = await page.evaluate(
-        '''() => {
+        '''priorityWords => {
         const result = [];
         const selector = [
             'button',
@@ -71,11 +73,6 @@ async def _do_extract(page):
             '[class*="editor"]',
             '[class*="Editor"]'
         ].join(',');
-        const priorityWords = [
-            '草稿箱', '草稿',
-            '暂存离开', '暂存并离开', '保存草稿', '存草稿', '保存并离开', '离开并保存'
-        ];
-
         const nodes = Array.from(document.querySelectorAll(selector));
         const seenNodes = new Set();
         const seenTargets = new Set();
@@ -215,6 +212,7 @@ async def _do_extract(page):
             return bPriority - aPriority;
         });
         return filtered.map((item, index) => ({...item, index}));
-    }'''
+    }''',
+        get_prompt_list("element_extractor", "priority_words"),
     )
     return elements

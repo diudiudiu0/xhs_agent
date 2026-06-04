@@ -4,6 +4,7 @@ from pathlib import Path
 
 from cfg.model_config import MODEL_CONFIG
 from src.element_extractor import extract_interactive_elements
+from src.prompt_config import get_prompt_config, render_prompt_template
 from src.task_config_loader import get_active_note_task_config
 
 
@@ -407,7 +408,7 @@ async def get_next_action(
 
     elements_text = "\n".join([f"[{el['index']}] {el['desc']}" for el in elements])
 
-    history_str = "暂无"
+    history_str = str(get_prompt_config("legacy_note_planner", "default_history_text", default=""))
     if history:
         history_str = "\n".join(
             [
@@ -430,37 +431,25 @@ async def get_next_action(
     rules_text = "\n".join([f"    - {rule}" for rule in task_config.get("planner_rules", [])])
     planner_intro = task_config.get(
         "planner_intro",
-        "你是小红书创作中心自动化 Agent，目标是创建图文笔记草稿。",
+        str(get_prompt_config("legacy_note_planner", "default_planner_intro", default="")),
     )
     response_schema = task_config.get(
         "response_schema",
-        '{"action": "wait", "element_index": null, "value": "", "reason": "", "expected_result": ""}',
+        str(get_prompt_config("legacy_note_planner", "default_response_schema", default="")),
     )
 
-    prompt = f"""{planner_intro}
-    
-    当前 Agent 内部状态：
-    {state_text}
-    
-    浏览器页面上下文：
-    {context_text}
-    
-    当前页面可交互元素列表：
-    {elements_text}
-    
-    最近执行历史：
-    {history_str}
-    
-    {first_step_instruction}
-    
-    任务目标：{task_description}
-    
-    返回严格 JSON：
-{response_schema}
-    
-    规则：
-{rules_text}
-    """
+    prompt = render_prompt_template(
+        str(get_prompt_config("legacy_note_planner", "prompt_template", default="")),
+        planner_intro=planner_intro,
+        state_text=state_text,
+        context_text=context_text,
+        elements_text=elements_text,
+        history_str=history_str,
+        first_step_instruction=first_step_instruction,
+        task_description=task_description,
+        response_schema=response_schema,
+        rules_text=rules_text,
+    )
     try:
         client = _get_client()
         response = client.chat.completions.create(

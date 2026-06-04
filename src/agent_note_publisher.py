@@ -19,15 +19,27 @@ from src.browser_state_observer import (
     summarize_browser_state,
     wait_for_browser_feedback,
 )
+from src.prompt_config import get_prompt_list
 
 
-STOP_PUBLISH_KEYWORDS = ["发布", "提交", "确认发布", "立即发布"]
-SAVE_AND_LEAVE_KEYWORDS = ["暂存离开", "保存草稿", "存草稿"]
-PUBLISH_ENTRY_KEYWORDS = ["发布笔记", "开始发布", "创建笔记"]
-IMAGE_ENTRY_KEYWORDS = ["发布图文笔记", "图文笔记", "上传图文", "图片笔记"]
-VIDEO_ENTRY_KEYWORDS = ["上传视频", "视频笔记", "发布视频"]
-UPLOAD_KEYWORDS = ["上传图片", "选择图片", "上传文件", "添加图片", "点击上传"]
-VIDEO_KEYWORDS = ["上传视频", "视频大小", "视频格式", "mp4", "mov", "avi", "20GB", "4小时"]
+def _publisher_keywords(name: str) -> list[str]:
+    return [str(value) for value in get_prompt_list("note_publisher", "keywords", name)]
+
+
+STOP_PUBLISH_KEYWORDS = _publisher_keywords("stop_publish")
+SAVE_AND_LEAVE_KEYWORDS = _publisher_keywords("save_and_leave")
+PUBLISH_ENTRY_KEYWORDS = _publisher_keywords("publish_entry")
+IMAGE_ENTRY_KEYWORDS = _publisher_keywords("image_entry")
+VIDEO_ENTRY_KEYWORDS = _publisher_keywords("video_entry")
+UPLOAD_KEYWORDS = _publisher_keywords("upload")
+VIDEO_KEYWORDS = _publisher_keywords("video")
+TITLE_FIELD_KEYWORDS = _publisher_keywords("title_fields")
+CONTENT_FIELD_KEYWORDS = _publisher_keywords("content_fields")
+VIDEO_UPLOAD_KEYWORDS = _publisher_keywords("video_upload")
+CONTENTEDITABLE_EMPTY_KEYWORDS = _publisher_keywords("contenteditable_empty")
+SEARCH_EXCLUDE_KEYWORDS = _publisher_keywords("search_excludes")
+PUBLISH_ENTRY_EXCLUDE_KEYWORDS = _publisher_keywords("publish_entry_excludes")
+IMAGE_UPLOAD_EXCLUDE_KEYWORDS = _publisher_keywords("image_upload_excludes")
 
 
 def _image_folder_ready(image_folder: str | None) -> bool:
@@ -69,7 +81,7 @@ def _element_by_index(elements, index):
 
 def _is_dangerous_publish(element):
     text = _text_of(element)
-    if "发布笔记" in text or "发布图文笔记" in text:
+    if any(word in text for word in PUBLISH_ENTRY_KEYWORDS + IMAGE_ENTRY_KEYWORDS):
         return False
     return any(word == text or text.endswith(word) for word in STOP_PUBLISH_KEYWORDS)
 
@@ -101,25 +113,25 @@ def _choose_builtin_action(elements, title, content, media_uploaded, filled_titl
     post_type = state.get("post_type", "image")
     title_idx = _find_element(
         elements,
-        ["标题", "请输入标题", "填写标题"],
+        TITLE_FIELD_KEYWORDS,
         types={"input", "textarea", "textbox"},
-        excludes=["搜索"],
+        excludes=SEARCH_EXCLUDE_KEYWORDS,
     )
     content_idx = _find_element(
         elements,
-        ["正文", "内容", "描述", "分享", "空白正文编辑区"],
+        CONTENT_FIELD_KEYWORDS,
         types={"contenteditable", "textarea", "textbox"},
-        excludes=["标题", "搜索"],
+        excludes=TITLE_FIELD_KEYWORDS + SEARCH_EXCLUDE_KEYWORDS,
     )
 
     image_entry_idx = _find_element(elements, IMAGE_ENTRY_KEYWORDS, excludes=VIDEO_KEYWORDS)
     video_entry_idx = _find_element(elements, VIDEO_ENTRY_KEYWORDS)
     upload_idx = _find_element(
         elements,
-        UPLOAD_KEYWORDS if post_type == "image" else ["上传视频", "选择视频", "上传文件", "点击上传"],
-        excludes=VIDEO_KEYWORDS if post_type == "image" else ["上传图文", "上传图片", "图片大小"],
+        UPLOAD_KEYWORDS if post_type == "image" else VIDEO_UPLOAD_KEYWORDS,
+        excludes=VIDEO_KEYWORDS if post_type == "image" else IMAGE_UPLOAD_EXCLUDE_KEYWORDS,
     )
-    publish_entry_idx = _find_element(elements, PUBLISH_ENTRY_KEYWORDS, excludes=["管理", "数据"])
+    publish_entry_idx = _find_element(elements, PUBLISH_ENTRY_KEYWORDS, excludes=PUBLISH_ENTRY_EXCLUDE_KEYWORDS)
     save_leave_idx = _find_element(elements, SAVE_AND_LEAVE_KEYWORDS)
 
     if draft_saved:
@@ -175,7 +187,7 @@ def _choose_builtin_action(elements, title, content, media_uploaded, filled_titl
         if content_idx is not None:
             return {"action": "fill", "element_index": content_idx, "value": content}
 
-        idx = _find_element(elements, ["空白正文编辑区"], types={"contenteditable"})
+        idx = _find_element(elements, CONTENTEDITABLE_EMPTY_KEYWORDS, types={"contenteditable"})
         if idx is not None:
             return {"action": "fill", "element_index": idx, "value": content}
 

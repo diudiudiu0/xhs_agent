@@ -50,6 +50,11 @@ def _parse_scalar(value: str):
         return None
     if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
         return ast.literal_eval(value)
+    if value.startswith(("[", "{")) and value.endswith(("]", "}")):
+        try:
+            return ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            return value
     try:
         return int(value)
     except ValueError:

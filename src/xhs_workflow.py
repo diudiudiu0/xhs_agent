@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from src.prompt_config import get_prompt_config, get_prompt_dict, get_prompt_list, render_prompt_template
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKLOG_PATH = PROJECT_ROOT / "agent_memory" / "xhs_agent_worklog.json"
@@ -114,30 +116,17 @@ class XhsWorkflow:
         return task
 
     def _default_steps(self, action: str) -> list[WorkStep]:
-        mapping = {
-            "generate_prompts": ["读取图片任务配置", "调用视觉模型生成提示词", "保存提示词到会话记忆"],
-            "revise_prompts": ["读取当前提示词", "按用户要求重写提示词", "保存修改后的提示词"],
-            "generate_images": ["读取当前提示词", "调用图片模型生成图片", "保存图片路径到会话记忆"],
-            "plan_note_text": ["读取当前图片提示词", "生成标题和正文", "保存发帖文案"],
-            "create_draft": ["打开创作中心", "上传素材", "填写标题正文", "暂存离开"],
-            "open_page": ["打开创作中心", "保存页面句柄"],
-            "page_state": ["打开或复用页面", "采集页面状态", "输出状态摘要"],
-            "handle_dialogs": ["打开或复用页面", "检测并处理网页弹窗", "记录处理结果"],
-            "explore_page_task": ["理解页面任务", "观察页面和可交互元素", "小步探索并观察反馈", "提取结果并记录成功路径"],
-        }
-        return [WorkStep(name=name) for name in mapping.get(action, ["理解用户请求", "给出回复"])]
+        mapping = get_prompt_dict("workflow", "default_steps")
+        fallback = mapping.get("fallback") or ["understand_request", "respond"]
+        steps = mapping.get(action, fallback)
+        return [WorkStep(name=str(name)) for name in steps]
 
     def _tokens(self, text: str) -> set[str]:
         import re
 
         text = (text or "").lower()
-        domain_terms = {
-            "草稿箱", "草稿", "标题", "正文", "内容", "编辑", "修改", "删除",
-            "创建", "发布", "上传", "图片", "视频", "首页", "笔记管理",
-            "发帖", "第一篇", "最早", "较早", "时间更早", "数量", "详情",
-            "帖子", "笔记", "作品", "文档",
-        }
-        stop_chars = set("的了我你他她它为把将当前这边那篇这篇一个一下多少几有请帮")
+        domain_terms = set(get_prompt_list("workflow", "memory_terms", "domain_terms"))
+        stop_chars = set(str(get_prompt_config("workflow", "memory_terms", "stop_chars", default="")))
         tokens = set(re.findall(r"[a-z0-9]+", text))
         tokens.update(term for term in domain_terms if term in text)
 
@@ -203,7 +192,7 @@ class XhsWorkflow:
         try:
             from openai import OpenAI
 
-            from cfg.model_config import MODEL_CONFIG
+            from cfg.model_config import MEMORY_REVIEW_MODEL_CONFIG
         except Exception as exc:
             return {
                 "should_add": True,
@@ -211,42 +200,23 @@ class XhsWorkflow:
                 "reason": f"记忆审核模型不可用，使用本地非重复判断：{exc}",
             }
 
-        prompt = f"""
-你是小红书 Agent 的长期记忆审核器。
-
-任务：
-判断“当前成功请求”是否应该作为一条新的长期记忆写入。
-
-判断标准：
-- 如果当前请求和已有请求语义相同、只是措辞不同、标点不同、数量表达不同，should_add=false。
-- 如果当前请求是已有请求的明显重复执行，也 should_add=false。
-- 如果当前请求目标不同、操作对象不同、成功路径可能不同，should_add=true。
-- 只比较请求语义，不要根据步骤判断。
-
-已有长期记忆请求列表：
-{json.dumps(existing_requests, ensure_ascii=False, indent=2)}
-
-当前成功请求：
-{user_request}
-
-只输出 JSON：
-{{
-  "should_add": true,
-  "duplicate_request": "",
-  "reason": "简短说明"
-}}
-""".strip()
+        template = str(get_prompt_config("workflow", "memory_review_prompt_template", default=""))
+        prompt = render_prompt_template(
+            template,
+            existing_requests_json=json.dumps(existing_requests, ensure_ascii=False, indent=2),
+            user_request=user_request,
+        )
         try:
             client = OpenAI(
-                api_key=MODEL_CONFIG["api_key"],
-                base_url=MODEL_CONFIG["base_url"],
-                timeout=MODEL_CONFIG.get("timeout", 30),
+                api_key=MEMORY_REVIEW_MODEL_CONFIG["api_key"],
+                base_url=MEMORY_REVIEW_MODEL_CONFIG["base_url"],
+                timeout=MEMORY_REVIEW_MODEL_CONFIG.get("timeout", 30),
             )
             response = client.chat.completions.create(
-                model=MODEL_CONFIG.get("formatter_model") or MODEL_CONFIG.get("content_model"),
+                model=MEMORY_REVIEW_MODEL_CONFIG.get("model", "deepseek-v4-flash"),
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=500,
-                temperature=MODEL_CONFIG.get("formatter_temperature", 0.1),
+                max_tokens=MEMORY_REVIEW_MODEL_CONFIG.get("max_tokens", 800),
+                temperature=MEMORY_REVIEW_MODEL_CONFIG.get("temperature", 0.1),
             )
             raw_text = response.choices[0].message.content or ""
             start = raw_text.find("{")
@@ -314,7 +284,7 @@ class XhsWorkflow:
         if not query_tokens:
             return []
         scored = []
-        important_terms = {"草稿箱", "草稿", "标题", "正文", "编辑", "修改", "删除", "创建", "上传", "图片", "视频", "数量", "详情"}
+        important_terms = set(get_prompt_list("workflow", "memory_terms", "important_terms"))
         for item in self.experiences:
             request_tokens = self._tokens(item.user_request)
             haystack = " ".join([item.user_request, item.result, item.summary])
@@ -417,18 +387,21 @@ class XhsWorkflow:
         return "\n".join(lines)
 
     def next_suggestion(self) -> str:
+        suggestions = get_prompt_dict("workflow", "next_suggestions")
         task = self.current_task
         if not task:
-            return "下一步：等待用户提出任务。"
+            return str(suggestions.get("idle", ""))
         if task.status == "failed":
             if "ERR_NAME_NOT_RESOLVED" in task.error or "DNS/网络解析失败" in task.error:
-                return "下一步：先检查本机网络、代理或 DNS；如果浏览器里已有小红书页面，重新发起任务时 Agent 会优先复用现有页面。"
-            return "下一步：根据错误信息调整参数或重新发起任务。"
+                return str(suggestions.get("failed_network", ""))
+            return str(suggestions.get("failed_default", ""))
         if task.status == "completed":
             if task.next_suggestion:
                 if task.next_suggestion.startswith("下一步"):
                     return task.next_suggestion
                 return f"下一步：{task.next_suggestion}"
-            return "下一步：等待用户继续指令。"
+            return str(suggestions.get("completed_default", ""))
         pending = [step.name for step in task.steps if step.status == "pending"]
-        return f"下一步：继续执行 {pending[0]}。" if pending else "下一步：整理任务结果。"
+        if pending:
+            return str(suggestions.get("pending_template", "next: {step}")).format(step=pending[0])
+        return str(suggestions.get("finishing", ""))

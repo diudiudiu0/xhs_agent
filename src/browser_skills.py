@@ -6,6 +6,16 @@ from pathlib import Path
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
+from src.prompt_config import get_prompt_config, get_prompt_list
+
+
+def _browser_words(*keys: str) -> list[str]:
+    return [str(value) for value in get_prompt_list("browser_skills", *keys)]
+
+
+def _browser_text(*keys: str, default: str = "") -> str:
+    return str(get_prompt_config("browser_skills", *keys, default=default))
+
 
 def _text_from_desc(desc: str) -> str:
     return desc.split('] ', 1)[1] if '] ' in desc else desc
@@ -309,6 +319,357 @@ async def click_semantic_target(page, target_text, intent="", avoid_texts=None, 
     return False
 
 
+async def click_near_text(page, near_text, target_text, intent="", avoid_texts=None):
+    """
+    在包含 near_text 的页面区域附近点击 target_text。
+
+    这是锚点区域点击工具：当页面上有多个同名操作时，Agent 先从当前页面
+    信息中选择能唯一定位目标对象的锚点文本，再在该区域内或附近点击目标操作。
+    """
+    near_text = str(near_text or "").strip()
+    target_text = str(target_text or "").strip()
+    if not near_text:
+        raise Exception("near_text 不能为空")
+    if not target_text:
+        raise Exception("target_text 不能为空")
+
+    avoid_texts = [str(item).strip() for item in (avoid_texts or []) if str(item).strip()]
+    payload = {
+        "nearText": near_text,
+        "targetText": target_text,
+        "intent": str(intent or ""),
+        "avoidTexts": avoid_texts,
+    }
+    script = """payload => {
+        const nearText = payload.nearText || '';
+        const targetText = payload.targetText || '';
+        const avoidTexts = payload.avoidTexts || [];
+        const clickableSelector = [
+            'button',
+            'a',
+            '[role="button"]',
+            '[role="link"]',
+            '[onclick]',
+            '[tabindex]',
+            '[class*="btn"]',
+            '[class*="Btn"]',
+            '[class*="button"]',
+            '[class*="Button"]',
+            'span',
+            'div'
+        ].join(',');
+
+        function norm(text) {
+            return String(text || '').replace(/\\s+/g, '').trim();
+        }
+
+        const near = norm(nearText);
+        const target = norm(targetText);
+        const avoid = avoidTexts.map(norm).filter(Boolean);
+
+        function textOf(el) {
+            if (!el) return '';
+            const attrs = [
+                'aria-label',
+                'title',
+                'data-text',
+                'data-title',
+                'data-name',
+                'data-label'
+            ].map(name => el.getAttribute && el.getAttribute(name)).filter(Boolean);
+            return norm([attrs.join(' '), el.innerText || '', el.textContent || ''].join(' '));
+        }
+
+        function visible(el) {
+            if (!el || !el.getBoundingClientRect) return false;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0
+                && style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && style.opacity !== '0'
+                && style.pointerEvents !== 'none';
+        }
+
+        function isAvoided(text) {
+            return avoid.some(word => word && text.includes(word));
+        }
+
+        const all = Array.from(document.querySelectorAll('*')).filter(visible);
+        const nearNodes = all
+            .map(el => ({el, text: textOf(el)}))
+            .filter(item => item.text && item.text.includes(near) && !isAvoided(item.text))
+            .sort((a, b) => a.text.length - b.text.length);
+
+        function scoreContainer(el) {
+            const text = textOf(el);
+            if (!text.includes(near)) return -9999;
+            let value = 0;
+            if (text.includes(target)) value += 700;
+            if (/comment|reply|note|card|item|list|content|interact/i.test(String(el.className || ''))) value += 120;
+            const rect = el.getBoundingClientRect();
+            if (rect.width > 120 && rect.height > 20) value += 40;
+            value -= Math.max(0, text.length - near.length) * 0.03;
+            return value;
+        }
+
+        const containers = [];
+        const seen = new Set();
+        for (const item of nearNodes.slice(0, 30)) {
+            let node = item.el;
+            for (let depth = 0; node && depth < 8; depth += 1) {
+                if (!seen.has(node)) {
+                    seen.add(node);
+                    containers.push({el: node, score: scoreContainer(node), text: textOf(node)});
+                }
+                node = node.parentElement;
+            }
+        }
+        containers.sort((a, b) => b.score - a.score);
+
+        function candidatesIn(root) {
+            return Array.from(root.querySelectorAll(clickableSelector))
+                .filter(visible)
+                .map(el => ({el, text: textOf(el)}))
+                .filter(item => item.text && item.text.includes(target) && !isAvoided(item.text))
+                .sort((a, b) => {
+                    const aExact = a.text === target ? 1 : 0;
+                    const bExact = b.text === target ? 1 : 0;
+                    if (aExact !== bExact) return bExact - aExact;
+                    return a.text.length - b.text.length;
+                });
+        }
+
+        for (const container of containers) {
+            const candidates = candidatesIn(container.el);
+            if (candidates.length) {
+                let el = candidates[0].el;
+                const actionable = el.closest && el.closest(
+                    'button,a,[role="button"],[role="link"],[onclick],[tabindex],'
+                    + '[class*="btn"],[class*="Btn"],[class*="button"],[class*="Button"]'
+                );
+                if (actionable && textOf(actionable).includes(target)) {
+                    el = actionable;
+                }
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                el.click();
+                el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+                return {
+                    clicked: true,
+                    mode: 'near-text',
+                    nearText: container.text.slice(0, 180),
+                    clickedText: textOf(el).slice(0, 180)
+                };
+            }
+        }
+
+        return {
+            clicked: false,
+            nearCandidates: nearNodes.map(item => item.text).slice(0, 20),
+            targetCandidates: all.map(el => textOf(el)).filter(text => text.includes(target)).slice(0, 20)
+        };
+    }"""
+
+    all_candidates = []
+    for frame in page.frames:
+        try:
+            result = await frame.evaluate(script, payload)
+        except Exception:
+            continue
+        if result.get("clicked"):
+            print(
+                "已点击附近语义目标："
+                f"near={near_text} target={target_text} mode={result.get('mode')} "
+                f"clicked={result.get('clickedText')}"
+            )
+            await asyncio.sleep(1.2)
+            return True
+        all_candidates.append(result)
+
+    print(
+        f"未点到 near='{near_text}' 附近的 target='{target_text}'，"
+        f"候选：{all_candidates[:3]}"
+    )
+    return False
+
+
+async def click_media_near_text(page, near_text, intent="", avoid_texts=None):
+    """
+    在包含 near_text 的页面区域附近点击媒体缩略图/封面。
+
+    这是通用媒体锚点工具：当列表项、消息、评论、卡片旁边有可点击图片/视频封面时，
+    Agent 先用 near_text 定位目标对象，再点击该区域内或附近最像媒体封面的元素。
+    """
+    near_text = str(near_text or "").strip()
+    if not near_text:
+        raise Exception("near_text 不能为空")
+
+    avoid_texts = [str(item).strip() for item in (avoid_texts or []) if str(item).strip()]
+    payload = {
+        "nearText": near_text,
+        "intent": str(intent or ""),
+        "avoidTexts": avoid_texts,
+    }
+    script = """payload => {
+        const nearText = payload.nearText || '';
+        const avoidTexts = payload.avoidTexts || [];
+        const mediaSelector = [
+            'img',
+            'video',
+            'canvas',
+            '[role="img"]',
+            '[class*="cover"]',
+            '[class*="Cover"]',
+            '[class*="image"]',
+            '[class*="Image"]',
+            '[class*="img"]',
+            '[class*="Img"]',
+            '[class*="thumb"]',
+            '[class*="Thumb"]',
+            '[style*="background-image"]'
+        ].join(',');
+        const clickableSelector = [
+            'button',
+            'a',
+            '[role="button"]',
+            '[role="link"]',
+            '[onclick]',
+            '[tabindex]',
+            '[class*="card"]',
+            '[class*="Card"]',
+            '[class*="item"]',
+            '[class*="Item"]',
+            '[class*="cover"]',
+            '[class*="Cover"]'
+        ].join(',');
+
+        function norm(text) {
+            return String(text || '').replace(/\\s+/g, '').trim();
+        }
+
+        const near = norm(nearText);
+        const avoid = avoidTexts.map(norm).filter(Boolean);
+
+        function textOf(el) {
+            if (!el) return '';
+            const attrs = [
+                'aria-label',
+                'title',
+                'alt',
+                'data-text',
+                'data-title',
+                'data-name',
+                'data-label'
+            ].map(name => el.getAttribute && el.getAttribute(name)).filter(Boolean);
+            return norm([attrs.join(' '), el.innerText || '', el.textContent || ''].join(' '));
+        }
+
+        function visible(el) {
+            if (!el || !el.getBoundingClientRect) return false;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 12 && rect.height > 12
+                && style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && style.opacity !== '0'
+                && style.pointerEvents !== 'none';
+        }
+
+        function isAvoided(text) {
+            return avoid.some(word => word && text.includes(word));
+        }
+
+        const all = Array.from(document.querySelectorAll('*')).filter(visible);
+        const nearNodes = all
+            .map(el => ({el, text: textOf(el)}))
+            .filter(item => item.text && item.text.includes(near) && !isAvoided(item.text))
+            .sort((a, b) => a.text.length - b.text.length);
+
+        const containers = [];
+        const seen = new Set();
+        for (const item of nearNodes.slice(0, 30)) {
+            let node = item.el;
+            for (let depth = 0; node && depth < 9; depth += 1) {
+                if (!seen.has(node)) {
+                    seen.add(node);
+                    containers.push(node);
+                }
+                node = node.parentElement;
+            }
+        }
+
+        function mediaScore(el, container) {
+            if (!visible(el)) return -9999;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            const tag = el.tagName.toLowerCase();
+            const cls = String(el.className || '');
+            let value = 0;
+            if (tag === 'img' || tag === 'video') value += 400;
+            if (tag === 'canvas' || el.getAttribute('role') === 'img') value += 260;
+            if (/cover|image|img|thumb|photo|media|preview/i.test(cls)) value += 220;
+            if ((style.backgroundImage || '').includes('url(')) value += 180;
+            if (rect.width >= 40 && rect.height >= 40) value += 80;
+            if (rect.width >= 80 && rect.height >= 80) value += 60;
+            const containerRect = container.getBoundingClientRect();
+            const rightSide = rect.left > containerRect.left + containerRect.width * 0.45;
+            if (rightSide) value += 45;
+            value -= Math.abs(rect.width - rect.height) * 0.2;
+            value -= Math.max(0, textOf(el).length - 80) * 0.4;
+            return value;
+        }
+
+        for (const container of containers) {
+            const media = Array.from(container.querySelectorAll(mediaSelector))
+                .filter(visible)
+                .map(el => ({el, score: mediaScore(el, container), text: textOf(el)}))
+                .filter(item => item.score > -9999 && !isAvoided(item.text))
+                .sort((a, b) => b.score - a.score);
+            if (!media.length) continue;
+
+            let el = media[0].el;
+            const actionable = el.closest && el.closest(clickableSelector);
+            if (actionable && visible(actionable)) {
+                el = actionable;
+            }
+            el.scrollIntoView({block: 'center', inline: 'center'});
+            el.click();
+            el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+            return {
+                clicked: true,
+                mode: 'media-near-text',
+                nearText: textOf(container).slice(0, 180),
+                clickedText: textOf(el).slice(0, 180),
+                tag: el.tagName.toLowerCase()
+            };
+        }
+
+        return {
+            clicked: false,
+            nearCandidates: nearNodes.map(item => item.text).slice(0, 20),
+            mediaCount: Array.from(document.querySelectorAll(mediaSelector)).filter(visible).length
+        };
+    }"""
+
+    all_candidates = []
+    for frame in page.frames:
+        try:
+            result = await frame.evaluate(script, payload)
+        except Exception:
+            continue
+        if result.get("clicked"):
+            print(
+                "已点击锚点附近媒体："
+                f"near={near_text} mode={result.get('mode')} clicked={result.get('clickedText')}"
+            )
+            await asyncio.sleep(1.2)
+            return True
+        all_candidates.append(result)
+
+    print(f"未点到 near='{near_text}' 附近的媒体，候选：{all_candidates[:3]}")
+    return False
+
+
 async def click_by_index(page, index, elements_cache):
     """
     根据元素索引点击。elements_cache 必须为提取的元素列表。
@@ -442,6 +803,102 @@ async def fill_by_index(page, index, value, elements_cache):
         await locator.click(timeout=10000)
         await page.keyboard.press("Control+A")
         await page.keyboard.type(value)
+
+
+async def fill_textbox_by_hint(page, value, hint_text="", prefer_focused=True):
+    """
+    按提示文本/焦点填写可见输入框。
+
+    适用于弹出的回复框、评论框、搜索框等动态输入区域。Agent 可以用 hint_text
+    描述目标输入框；为空时优先填写当前焦点输入框，再选择最合理的空输入框。
+    """
+    value = str(value or "")
+    hint_text = str(hint_text or "").strip()
+    result = await page.evaluate(
+        """payload => {
+            const value = payload.value || '';
+            const hintText = String(payload.hintText || '').replace(/\\s+/g, '').trim();
+            const preferFocused = payload.preferFocused;
+            const selectors = 'input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"], [role="textbox"]';
+
+            function norm(text) {
+                return String(text || '').replace(/\\s+/g, '').trim();
+            }
+
+            function visible(el) {
+                if (!el || !el.getBoundingClientRect) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden'
+                    && style.opacity !== '0';
+            }
+
+            function hintOf(el) {
+                return norm([
+                    el.getAttribute('placeholder') || '',
+                    el.getAttribute('aria-label') || '',
+                    el.getAttribute('data-placeholder') || '',
+                    el.getAttribute('title') || '',
+                    el.innerText || '',
+                    el.textContent || '',
+                    el.value || ''
+                ].join(' '));
+            }
+
+            function setValue(el) {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                el.focus();
+                if (el.isContentEditable || el.getAttribute('contenteditable')) {
+                    el.innerText = value;
+                } else {
+                    el.value = value;
+                }
+                el.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: value}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+                return {
+                    filled: true,
+                    tag: el.tagName.toLowerCase(),
+                    hint: hintOf(el).slice(0, 160)
+                };
+            }
+
+            const nodes = Array.from(document.querySelectorAll(selectors)).filter(visible);
+            const active = document.activeElement;
+            if (preferFocused && active && nodes.includes(active)) {
+                return setValue(active);
+            }
+
+            const scored = nodes.map(el => {
+                const hint = hintOf(el);
+                let score = 0;
+                if (hintText && hint.includes(hintText)) score += 1000;
+                if (/回复|评论|发送|留言|输入|搜索/.test(hint)) score += 180;
+                if (!norm(el.value || el.innerText || el.textContent)) score += 70;
+                if (el.tagName.toLowerCase() === 'textarea') score += 50;
+                if (el.isContentEditable || el.getAttribute('contenteditable')) score += 40;
+                return {el, score, hint};
+            }).sort((a, b) => b.score - a.score);
+
+            const picked = scored.find(item => item.score > 0) || scored[0];
+            if (!picked) {
+                return {filled: false, candidates: []};
+            }
+            return setValue(picked.el);
+        }""",
+        {
+            "value": value,
+            "hintText": hint_text,
+            "preferFocused": prefer_focused,
+        },
+    )
+    if result.get("filled"):
+        print(f"已填写输入框：hint={result.get('hint')}")
+        await asyncio.sleep(0.8)
+        return True
+    print(f"未找到可填写输入框，候选：{result.get('candidates')}")
+    return False
 
 
 async def fill_title_direct(page, title):
@@ -667,7 +1124,7 @@ async def _click_exact_text(page, text, timeout=3000):
 
 async def switch_to_image_upload_tab(page):
     """确保页面处于图文上传模式，避免误用视频上传 input。"""
-    for text in ("上传图文", "图文", "发布图文笔记"):
+    for text in _browser_words("upload_modes", "image_entry_texts"):
         if await _click_exact_text(page, text):
             print(f"已切换/点击图文入口：{text}")
             await asyncio.sleep(1)
@@ -681,7 +1138,7 @@ async def switch_to_video_upload_tab(page):
     if _choose_video_file_input(candidates):
         return True
 
-    for text in ("上传视频", "视频"):
+    for text in _browser_words("upload_modes", "video_entry_texts"):
         if await _click_exact_text(page, text):
             print(f"已切换/点击视频入口：{text}")
             await asyncio.sleep(1)
@@ -692,14 +1149,15 @@ async def switch_to_video_upload_tab(page):
 
 async def _file_input_candidates(page):
     return await page.evaluate(
-        """() => Array.from(document.querySelectorAll('input[type="file"]')).map((el, index) => {
+        """terms => Array.from(document.querySelectorAll('input[type="file"]')).map((el, index) => {
             const accept = (el.getAttribute('accept') || '').toLowerCase();
             const rect = el.getBoundingClientRect();
             const nearText = (el.closest('div,section,main,form')?.innerText || '')
                 .replace(/\\s+/g, ' ')
                 .slice(0, 500);
-            const isImage = accept.includes('image') || /上传图文|上传图片|选择图片|添加图片|图片/i.test(nearText);
-            const isVideo = accept.includes('video') || (/上传视频|视频大小|mp4|mov|avi/i.test(nearText) && !isImage);
+            const includesAny = (text, words) => (words || []).some(word => text.includes(word));
+            const isImage = accept.includes('image') || includesAny(nearText, terms.imageNearTerms);
+            const isVideo = accept.includes('video') || (includesAny(nearText, terms.videoNearTerms) && !isImage);
             return {
                 index,
                 accept,
@@ -709,7 +1167,11 @@ async def _file_input_candidates(page):
                 isVideo,
                 isImage
             };
-        })"""
+        })""",
+        {
+            "imageNearTerms": _browser_words("file_input_detection", "image_near_terms"),
+            "videoNearTerms": _browser_words("file_input_detection", "video_near_terms"),
+        },
     )
 
 
@@ -758,7 +1220,7 @@ async def wait_for_image_upload_done(page, expected_count=1, timeout=60000):
     """等待图片上传后的页面信号。这个函数观察网页 DOM，不依赖系统弹窗。"""
     try:
         await page.wait_for_function(
-            """expected => {
+            """args => {
                 const bodyText = document.body?.innerText || '';
                 const imageLikeNodes = Array.from(document.querySelectorAll(
                     'img, canvas, [class*="thumb"], [class*="Thumb"], [class*="image"], [class*="Image"], [class*="preview"], [class*="Preview"]'
@@ -768,10 +1230,13 @@ async def wait_for_image_upload_done(page, expected_count=1, timeout=60000):
                     const style = window.getComputedStyle(el);
                     return rect.width > 20 && rect.height > 20 && style.display !== 'none' && style.visibility !== 'hidden';
                 });
-                return visibleImageNodes.length >= expected
-                    || /上传成功|上传完成|重新上传|删除|封面|下一步|填写标题|标题/.test(bodyText);
+                return visibleImageNodes.length >= args.expected
+                    || (args.signals || []).some(word => bodyText.includes(word));
             }""",
-            expected_count,
+            {
+                "expected": expected_count,
+                "signals": _browser_words("upload_done_signals", "image"),
+            },
             timeout=timeout,
         )
         return True
@@ -784,7 +1249,7 @@ async def wait_for_video_upload_done(page, timeout=120000):
     """等待视频文件提交后的页面信号。"""
     try:
         await page.wait_for_function(
-            """() => {
+            """signals => {
                 const bodyText = document.body?.innerText || '';
                 const videoNodes = Array.from(document.querySelectorAll(
                     'video, canvas, [class*="video"], [class*="Video"], [class*="preview"], [class*="Preview"]'
@@ -795,8 +1260,9 @@ async def wait_for_video_upload_done(page, timeout=120000):
                     return rect.width > 20 && rect.height > 20 && style.display !== 'none' && style.visibility !== 'hidden';
                 });
                 return visibleVideoNodes.length > 0
-                    || /上传成功|上传完成|处理中|转码|重新上传|删除|封面|标题|填写标题/.test(bodyText);
+                    || (signals || []).some(word => bodyText.includes(word));
             }""",
+            _browser_words("upload_done_signals", "video"),
             timeout=timeout,
         )
         return True
@@ -832,8 +1298,7 @@ async def close_upload_dialog_if_present(page):
 
     async def has_close_candidate():
         return await page.evaluate(
-            """() => {
-                const safeTexts = ['完成', '确定', '确认', '下一步', '保存', '我知道了'];
+            """safeTexts => {
                 return Array.from(document.querySelectorAll('button, [role="button"], [tabindex], span, div')).some(el => {
                     const rect = el.getBoundingClientRect();
                     const style = window.getComputedStyle(el);
@@ -843,7 +1308,8 @@ async def close_upload_dialog_if_present(page):
                         && style.visibility !== 'hidden'
                         && safeTexts.some(word => text === word || (text.includes(word) && text.length <= 20));
                 });
-            }"""
+            }""",
+            _browser_words("upload_dialog", "safe_texts"),
         )
 
     if not await modal_still_visible() and not await has_close_candidate():
@@ -852,9 +1318,9 @@ async def close_upload_dialog_if_present(page):
 
     for _ in range(5):
         clicked_text = await page.evaluate(
-            """() => {
-                const safeTexts = ['完成', '确定', '确认', '下一步', '保存', '我知道了'];
-                const dangerousTexts = ['发布', '提交', '确认发布', '立即发布'];
+            """terms => {
+                const safeTexts = terms.safeTexts || [];
+                const dangerousTexts = terms.dangerousTexts || [];
                 const candidates = Array.from(document.querySelectorAll(
                     'button, [role="button"], [tabindex], .btn, [class*="btn"], [class*="Btn"], [class*="button"], [class*="Button"], span, div'
                 ));
@@ -898,7 +1364,11 @@ async def close_upload_dialog_if_present(page):
                     }
                 }
                 return '';
-            }"""
+            }""",
+            {
+                "safeTexts": _browser_words("upload_dialog", "safe_texts"),
+                "dangerousTexts": _browser_words("upload_dialog", "dangerous_texts"),
+            },
         )
         if clicked_text:
             print(f"已点击上传弹窗收尾按钮：{clicked_text}")
@@ -981,23 +1451,30 @@ async def reveal_save_controls(page):
 
 async def click_save_and_leave(page):
     """保存草稿并结束本次任务。"""
+    target_text = _browser_text("save_and_leave", "target_text")
+    save_words = _browser_words("save_and_leave", "save_words")
+    publish_words = _browser_words("save_and_leave", "publish_words")
+    danger_words = _browser_words("save_and_leave", "danger_words")
+    candidate_terms = _browser_words("save_and_leave", "candidate_terms")
+    avoid_texts = _browser_words("save_and_leave", "avoid_texts")
+    event_names = _browser_words("save_and_leave", "event_names")
     try:
         if await click_semantic_target(
             page,
-            "暂存离开",
-            intent="save_draft",
-            avoid_texts=["发布", "立即发布", "确认发布", "提交"],
-            event_names=["save"],
+            target_text,
+            intent=_browser_text("save_and_leave", "intent"),
+            avoid_texts=avoid_texts,
+            event_names=event_names,
         ):
             return True
     except Exception:
         pass
 
     async def click_xhs_publish_component_save():
-        script = """() => {
+        script = """terms => {
             const components = Array.from(document.querySelectorAll('xhs-publish-btn[save-text], xhs-publish-btn[is-save-draft]'));
-            const saveWords = ['暂存离开', '暂存并离开', '保存草稿', '存草稿', '保存并离开', '离开并保存'];
-            const publishWords = ['发布', '立即发布', '确认发布'];
+            const saveWords = terms.saveWords || [];
+            const publishWords = terms.publishWords || [];
             const clickableSelector = [
                 'button',
                 '[role="button"]',
@@ -1105,9 +1582,10 @@ async def click_save_and_leave(page):
             return {clicked: false, diagnostics};
         }"""
         diagnostics = []
+        terms = {"saveWords": save_words, "publishWords": publish_words}
         for frame in page.frames:
             try:
-                result = await frame.evaluate(script)
+                result = await frame.evaluate(script, terms)
             except Exception:
                 continue
             if result.get("clicked"):
@@ -1130,7 +1608,7 @@ async def click_save_and_leave(page):
                 button = buttons.nth(index)
                 try:
                     text = (await button.inner_text(timeout=500)).replace("\n", "").strip()
-                    if text == "暂存离开" or "暂存离开" in text:
+                    if text == target_text or target_text in text or any(word in text for word in save_words):
                         await button.scroll_into_view_if_needed(timeout=1000)
                         await button.click(timeout=3000, force=True)
                         print("已通过精确选择器点击：暂存离开（保存到草稿箱）")
@@ -1139,9 +1617,11 @@ async def click_save_and_leave(page):
                 except Exception:
                     continue
 
-        script = """() => {
-                const saveWords = ['暂存离开', '暂存并离开', '保存草稿', '存草稿', '保存并离开', '离开并保存'];
-                const dangerWords = ['发布', '提交', '立即发布', '确认发布'];
+        script = """terms => {
+                const saveWords = terms.saveWords || [];
+                const dangerWords = terms.dangerWords || [];
+                const candidateTerms = terms.candidateTerms || [];
+                const targetText = terms.targetText || '';
                 const selectors = [
                     'button.ce-btn.white',
                     'button',
@@ -1178,7 +1658,7 @@ async def click_save_and_leave(page):
                 function visible(el) {
                     const rect = el.getBoundingClientRect();
                     const style = window.getComputedStyle(el);
-                    if (el.matches && el.matches('button.ce-btn.white') && norm(el.innerText || el.textContent).includes('暂存')) {
+                    if (el.matches && el.matches('button.ce-btn.white') && candidateTerms.some(word => norm(el.innerText || el.textContent).includes(word))) {
                         return style.display !== 'none' && style.visibility !== 'hidden';
                     }
                     return rect.width > 0 && rect.height > 0
@@ -1199,7 +1679,7 @@ async def click_save_and_leave(page):
                     if (el.matches('button.ce-btn.white')) value += 1000;
                     if (el.tagName.toLowerCase() === 'button') value += 500;
                     if (el.getAttribute('role') === 'button') value += 300;
-                    if (text === '暂存离开') value += 200;
+                    if (targetText && text === targetText) value += 200;
                     if (text.length <= 12) value += 50;
                     if (el.closest('[role="dialog"], [aria-modal="true"], [class*="modal"], [class*="Modal"], [class*="dialog"], [class*="Dialog"]')) value += 20;
                     return value;
@@ -1217,7 +1697,7 @@ async def click_save_and_leave(page):
                         candidates: nodes
                             .map(el => norm(el.innerText || el.textContent))
                             .filter(Boolean)
-                            .filter(text => text.includes('暂存') || text.includes('草稿') || text.includes('离开'))
+                            .filter(text => candidateTerms.some(word => text.includes(word)))
                             .filter(text => text.length <= 160)
                             .slice(0, 20)
                     };
@@ -1231,9 +1711,15 @@ async def click_save_and_leave(page):
                 return {clicked: true, text: candidates[0].text, candidates: candidates.map(item => item.text).slice(0, 5)};
             }"""
         all_candidates = []
+        terms = {
+            "saveWords": save_words,
+            "dangerWords": danger_words,
+            "candidateTerms": candidate_terms,
+            "targetText": target_text,
+        }
         for frame in page.frames:
             try:
-                result = await frame.evaluate(script)
+                result = await frame.evaluate(script, terms)
             except Exception:
                 continue
             if result.get("clicked"):
@@ -1272,7 +1758,7 @@ async def click_save_and_leave(page):
                 continue
         return False
 
-    if await click_text("暂存离开"):
+    if await click_text(target_text):
         return True
 
     try:
@@ -1280,7 +1766,7 @@ async def click_save_and_leave(page):
         await asyncio.sleep(1)
         if await click_save_candidate():
             return True
-        if await click_text("暂存离开"):
+        if await click_text(target_text):
             return True
     except Exception:
         pass
