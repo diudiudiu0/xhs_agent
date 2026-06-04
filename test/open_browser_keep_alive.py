@@ -1,4 +1,4 @@
-# test/open_browser_keep_alive.py
+﻿# test/open_browser_keep_alive.py
 """Open the XHS creator browser and keep it alive for manual observation."""
 
 import asyncio
@@ -12,7 +12,7 @@ if str(TEST_DIR) not in sys.path:
 
 import _bootstrap  # noqa: F401
 
-from src.browser_actions import AUTH_FILE, BROWSER_PROFILE_DIR, open_creator_home
+from src.browser_session import AUTH_FILE, BROWSER_PROFILE_DIR, open_creator_home
 
 
 async def _wait_for_user_exit():

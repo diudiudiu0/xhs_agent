@@ -1,4 +1,4 @@
-# Unified natural-language prompt and rule config.
+﻿# Unified natural-language prompt and rule config.
 #
 # Python files should keep execution logic hereafter. Prompts, workflow step labels,
 # page phase language rules, and memory-review language should be maintained here.
@@ -278,7 +278,7 @@ note_publisher:
     publish_entry_excludes: ["管理", "数据"]
     image_upload_excludes: ["上传图文", "上传图片", "图片大小"]
 
-xhs_agent_skills:
+xhs_skill_runtime:
   site_selector_prompt_template: |
     你是小红书账号 Agent 的页面选择器。请根据用户目标判断应该先在哪个网页会话里探索。
 
@@ -311,7 +311,7 @@ xhs_agent_skills:
     当前提示词：
     {current_prompts_json}
 
-browser_skills:
+browser_tools:
   upload_modes:
     image_entry_texts: ["上传图文", "图文", "发布图文笔记"]
     video_entry_texts: ["上传视频", "视频"]
@@ -338,7 +338,7 @@ browser_skills:
     danger_words: ["发布", "提交", "立即发布", "确认发布"]
     candidate_terms: ["暂存", "草稿", "离开"]
 
-element_extractor:
+interactive_element_extractor:
   priority_words:
     - 草稿箱
     - 草稿

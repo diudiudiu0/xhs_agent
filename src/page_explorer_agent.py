@@ -10,16 +10,16 @@ from typing import Any
 from openai import OpenAI
 
 from cfg.model_config import MODEL_CONFIG
-from src.browser_state_observer import (
+from src.browser_state import (
     observe_browser_state,
     summarize_browser_state,
     wait_for_browser_feedback,
 )
-from src.element_extractor import extract_interactive_elements
+from src.interactive_element_extractor import extract_interactive_elements
 from src.page_context import PageContextManager
 from src.page_tool_registry import PAGE_TOOL_REGISTRY, PageToolContext
 from src.prompt_config import get_prompt_config, get_prompt_list, render_prompt_template
-from src.system_dialog_observer import close_native_dialog_with_escape, get_native_dialog_state
+from src.native_dialog import close_native_dialog_with_escape, get_native_dialog_state
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

@@ -9,7 +9,7 @@ if str(TEST_DIR) not in sys.path:
 
 import _bootstrap  # noqa: F401
 
-from src.browser_actions import open_creator_home
+from src.browser_session import open_creator_home
 
 async def main():
     page, browser, context, p = await open_creator_home(headless=False)  # 接收 p

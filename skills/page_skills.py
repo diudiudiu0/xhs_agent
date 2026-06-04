@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from src.browser_state_observer import summarize_browser_state
+from src.browser_state import summarize_browser_state
 from skills.base import BaseSkill, SkillContext, SkillResult
 from skills.config import build_skill_spec, skill_message
 

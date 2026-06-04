@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from cfg.model_config import MODEL_CONFIG, VISION_PROMPT_MODEL_CONFIG
-from src.image_generation_agent import generate_or_edit_image_from_config
+from src.image_generation_service import generate_or_edit_image_from_config
 from src.prompt_config import get_prompt_config
 from src.task_config_loader import get_active_image_prompt_pipeline_config, get_active_image_prompt_task_config
 
@@ -495,7 +495,7 @@ def generate_image_with_prompt_from_image_config(
     generation_task_config: dict | None = None,
 ) -> dict:
     """
-    先根据 input_image 生成图片 prompt，再把生成的 prompt 交给 image_generation_agent 出图。
+    先根据 input_image 生成图片 prompt，再把生成的 prompt 交给 image_generation_service 出图。
 
     返回：
     - generated_prompt：兼容旧调用，单张时为提示词，多张时为多条提示词拼接文本

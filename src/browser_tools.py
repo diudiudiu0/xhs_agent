@@ -1,4 +1,4 @@
-﻿# src/browser_skills.py
+﻿# src/browser_tools.py
 import asyncio
 import random
 import sys
@@ -10,11 +10,11 @@ from src.prompt_config import get_prompt_config, get_prompt_list
 
 
 def _browser_words(*keys: str) -> list[str]:
-    return [str(value) for value in get_prompt_list("browser_skills", *keys)]
+    return [str(value) for value in get_prompt_list("browser_tools", *keys)]
 
 
 def _browser_text(*keys: str, default: str = "") -> str:
-    return str(get_prompt_config("browser_skills", *keys, default=default))
+    return str(get_prompt_config("browser_tools", *keys, default=default))
 
 
 def _text_from_desc(desc: str) -> str:

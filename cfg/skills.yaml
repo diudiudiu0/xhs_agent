@@ -1,4 +1,4 @@
-# Skill catalog for the XHS account-management manager agent.
+﻿# Skill catalog for the XHS account-management manager agent.
 #
 # The manager agent reads this file to decide which ability to call.
 # Python skill files should only execute logic; descriptions, risk policy,
@@ -82,7 +82,7 @@ skills:
   generate_images:
     description: 根据当前会话或显式传入的图片提示词生成图片，并保存到本机配置目录，按顺序命名避免覆盖。
     executor_type: tool
-    executor_agent: image_generation_agent
+    executor_agent: image_generation_service
     autonomy_level: low
     manager_role: manager 提供 prompts 或使用 session 中的 prompts；该 skill 负责调用图片生成 API 并保存文件。
     input_schema:
@@ -239,7 +239,7 @@ skills:
   get_page_state:
     description: 获取当前浏览器页面状态，例如加载阶段、响应情况、网页弹窗、系统文件弹窗线索、文件输入框数量和当前 URL。
     executor_type: tool
-    executor_agent: browser_state_observer
+    executor_agent: browser_state
     autonomy_level: low
     manager_role: manager 在判断页面是否卡住、是否需要等待或是否需要处理弹窗时调用。
     input_schema:

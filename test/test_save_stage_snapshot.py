@@ -8,8 +8,8 @@ if str(TEST_DIR) not in sys.path:
 
 import _bootstrap  # noqa: F401
 
-from src.browser_actions import open_creator_home
-from src.browser_skills import dump_save_stage_snapshot
+from src.browser_session import open_creator_home
+from src.browser_tools import dump_save_stage_snapshot
 
 
 async def main():

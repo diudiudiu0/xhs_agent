@@ -1,4 +1,4 @@
-# test/login_xhs_home_init.py
+﻿# test/login_xhs_home_init.py
 """Initialize login state for the Xiaohongshu main website."""
 
 import asyncio
@@ -12,7 +12,7 @@ if str(TEST_DIR) not in sys.path:
 
 import _bootstrap  # noqa: F401
 
-from src.browser_actions import (
+from src.browser_session import (
     XHS_HOME_URL,
     XHS_WEB_AUTH_FILE,
     XHS_WEB_PROFILE_DIR,

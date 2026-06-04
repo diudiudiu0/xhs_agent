@@ -5,7 +5,7 @@ from pathlib import Path
 from playwright.async_api import Error as PlaywrightError, async_playwright
 
 
-# 获取项目根目录（browser_actions.py -> src -> root）
+# 获取项目根目录（browser_session.py -> src -> root）
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AUTH_FILE = str(PROJECT_ROOT / "auth.json")
 BROWSER_PROFILE_DIR = PROJECT_ROOT / ".browser_profile" / "xhs_creator"

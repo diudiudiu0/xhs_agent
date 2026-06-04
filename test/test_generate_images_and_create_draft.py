@@ -8,10 +8,10 @@ if str(TEST_DIR) not in sys.path:
 
 import _bootstrap  # noqa: F401
 
-from src.agent_note_publisher import agent_create_note_draft
-from src.browser_actions import open_creator_home
+from src.note_draft_workflow import agent_create_note_draft
+from src.browser_session import open_creator_home
 from src.image_prompt_agent import generate_image_with_prompt_from_image_config
-from src.llm_planner import generate_note_text_from_image_prompts, get_note_task_inputs
+from src.note_content_service import generate_note_text_from_image_prompts, get_note_task_inputs
 from src.task_config_loader import get_active_image_prompt_pipeline_config
 
 

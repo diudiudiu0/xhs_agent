@@ -1,9 +1,9 @@
-﻿# src/llm_planner.py
+﻿# src/note_content_service.py
 import json
 from pathlib import Path
 
 from cfg.model_config import MODEL_CONFIG
-from src.element_extractor import extract_interactive_elements
+from src.interactive_element_extractor import extract_interactive_elements
 from src.prompt_config import get_prompt_config, render_prompt_template
 from src.task_config_loader import get_active_note_task_config
 

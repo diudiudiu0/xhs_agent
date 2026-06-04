@@ -177,15 +177,15 @@ python test/test_image_prompt_generation.py
 ## 主要文件
 
 - `test/login_init.py`：手动登录，保存 `auth.json`，并初始化 `.browser_profile/xhs_creator` 持久浏览器目录。
-- `src/browser_actions.py`：启动浏览器并进入创作中心。
-- `src/element_extractor.py`：提取当前页面可交互元素。
-- `src/browser_skills.py`：点击、填写、等待、上传图片/视频等浏览器动作。
-- `src/browser_state_observer.py`：采集页面加载、响应、弹窗、文件 input 和动作后页面变化状态。
-- `src/llm_planner.py`：调用模型根据页面元素规划下一步动作，并扩写正文。
-- `src/agent_note_publisher.py`：创建小红书草稿的主流程。
-- `src/xhs_agent_skills.py`：终端 Agent 的技能封装层，统一调用提示词生成、提示词修改、图片生成、页面状态和创建草稿。
+- `src/browser_session.py`：启动浏览器并进入创作中心。
+- `src/interactive_element_extractor.py`：提取当前页面可交互元素。
+- `src/browser_tools.py`：点击、填写、等待、上传图片/视频等浏览器动作。
+- `src/browser_state.py`：采集页面加载、响应、弹窗、文件 input 和动作后页面变化状态。
+- `src/note_content_service.py`：调用模型根据页面元素规划下一步动作，并扩写正文。
+- `src/note_draft_workflow.py`：创建小红书草稿的主流程。
+- `src/xhs_skill_runtime.py`：终端 Agent 的技能封装层，统一调用提示词生成、提示词修改、图片生成、页面状态和创建草稿。
 - `test/xhs_terminal_agent.py`：小红书个人账号终端交互 Agent 入口。
-- `src/image_generation_agent.py`：图片生成/编辑方法实现，不负责具体测试入口。
+- `src/image_generation_service.py`：图片生成/编辑方法实现，不负责具体测试入口。
 - `src/image_prompt_agent.py`：根据现有图片生成图片生成提示词，并调用图片生成流程出图。
 - `test/test_image_generation.py`：读取 `cfg/image_task.yaml` 的图片生成任务配置并执行一次生成/编辑测试。
 - `test/test_image_prompt_generation.py`：读取 `image_prompt_pipeline_tasks`，先执行看图提示词任务，再执行图片生成任务。

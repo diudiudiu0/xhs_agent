@@ -14,16 +14,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from cfg.model_config import MODEL_CONFIG
-from src.agent_note_publisher import agent_create_note_draft
-from src.browser_actions import open_creator_home, open_xhs_home
-from src.browser_skills import close_upload_dialog_if_present
-from src.browser_state_observer import observe_browser_state, summarize_browser_state
-from src.image_generation_agent import generate_or_edit_image_from_config
+from src.note_draft_workflow import agent_create_note_draft
+from src.browser_session import open_creator_home, open_xhs_home
+from src.browser_tools import close_upload_dialog_if_present
+from src.browser_state import observe_browser_state, summarize_browser_state
+from src.image_generation_service import generate_or_edit_image_from_config
 from src.image_prompt_agent import generate_image_prompts_from_image
-from src.llm_planner import generate_note_text_from_image_prompts, get_note_task_inputs
+from src.note_content_service import generate_note_text_from_image_prompts, get_note_task_inputs
 from src.prompt_config import get_prompt_config, render_prompt_template
 from src.task_config_loader import get_active_image_prompt_pipeline_config
-from src.xhs_page_explorer import XhsPageExplorer
+from src.page_explorer_agent import XhsPageExplorer
 
 
 def _text_client() -> OpenAI:
@@ -156,7 +156,7 @@ class XhsAgentSkills:
             return self._normalize_site(target_site)
 
         prompt = render_prompt_template(
-            str(get_prompt_config("xhs_agent_skills", "site_selector_prompt_template", default="")),
+            str(get_prompt_config("xhs_skill_runtime", "site_selector_prompt_template", default="")),
             active_site=self.memory.active_site,
             page_sessions_json=json.dumps(self._page_session_summary(), ensure_ascii=False, indent=2),
             user_goal=user_goal,
@@ -225,7 +225,7 @@ class XhsAgentSkills:
             raise ValueError("当前还没有可修改的图片提示词，请先生成提示词。")
 
         prompt = render_prompt_template(
-            str(get_prompt_config("xhs_agent_skills", "revise_prompts_prompt_template", default="")),
+            str(get_prompt_config("xhs_skill_runtime", "revise_prompts_prompt_template", default="")),
             prompt_count=len(self.memory.generated_prompts),
             revision_instruction=revision_instruction,
             current_prompts_json=json.dumps(self.memory.generated_prompts, ensure_ascii=False, indent=2),

@@ -8,9 +8,9 @@ if str(TEST_DIR) not in sys.path:
 
 import _bootstrap  # noqa: F401
 
-from src.browser_actions import open_creator_home
-from src.agent_note_publisher import agent_create_note_draft
-from src.llm_planner import get_note_task_inputs
+from src.browser_session import open_creator_home
+from src.note_draft_workflow import agent_create_note_draft
+from src.note_content_service import get_note_task_inputs
 
 async def main():
     try:

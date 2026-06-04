@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 
 
@@ -36,14 +36,14 @@ def main():
     if not steps:
         raise AssertionError("workflow default steps missing explore_page_task")
 
-    site_selector_template = get_prompt_config("xhs_agent_skills", "site_selector_prompt_template", default="")
+    site_selector_template = get_prompt_config("xhs_skill_runtime", "site_selector_prompt_template", default="")
     if "{user_goal}" not in site_selector_template:
-        raise AssertionError("xhs_agent_skills site selector template missing user_goal")
+        raise AssertionError("xhs_skill_runtime site selector template missing user_goal")
 
-    if not get_prompt_list("browser_skills", "save_and_leave", "save_words"):
-        raise AssertionError("browser_skills save words are empty")
-    if not get_prompt_list("element_extractor", "priority_words"):
-        raise AssertionError("element_extractor priority words are empty")
+    if not get_prompt_list("browser_tools", "save_and_leave", "save_words"):
+        raise AssertionError("browser_tools save words are empty")
+    if not get_prompt_list("interactive_element_extractor", "priority_words"):
+        raise AssertionError("interactive_element_extractor priority words are empty")
 
     print("prompt config check passed")
 

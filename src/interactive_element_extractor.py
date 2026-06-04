@@ -1,4 +1,4 @@
-﻿# src/element_extractor.py
+﻿# src/interactive_element_extractor.py
 import asyncio
 
 from playwright.async_api import Error as PlaywrightError
@@ -213,6 +213,6 @@ async def _do_extract(page):
         });
         return filtered.map((item, index) => ({...item, index}));
     }''',
-        get_prompt_list("element_extractor", "priority_words"),
+        get_prompt_list("interactive_element_extractor", "priority_words"),
     )
     return elements

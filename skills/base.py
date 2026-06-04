@@ -110,7 +110,7 @@ class SkillContext:
 
     def require_xhs_skills(self):
         if self.xhs_skills is None:
-            from src.xhs_agent_skills import XhsAgentSkills
+            from src.xhs_skill_runtime import XhsAgentSkills
 
             self.xhs_skills = XhsAgentSkills()
         return self.xhs_skills

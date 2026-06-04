@@ -1,4 +1,4 @@
-# test/test_page_tool_registry.py
+﻿# test/test_page_tool_registry.py
 import sys
 from pathlib import Path
 
@@ -10,7 +10,7 @@ if str(TEST_DIR) not in sys.path:
 import _bootstrap  # noqa: F401
 
 from src.page_tool_registry import PAGE_TOOL_REGISTRY
-from src.xhs_page_explorer import _is_valid_action
+from src.page_explorer_agent import _is_valid_action
 
 
 def main():

@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from src.manager_config import manager_config_get
 from src.manager_state import ManagerState
-from src.xhs_workflow import XhsWorkflow
+from src.agent_worklog import XhsWorkflow
 
 
 class ManagerMemory:

@@ -2,7 +2,7 @@
 import hashlib
 from typing import Any
 
-from src.system_dialog_observer import get_native_dialog_state
+from src.native_dialog import get_native_dialog_state
 
 
 async def _safe_evaluate(page, script: str, fallback: Any = None, timeout: float = 2.0):
