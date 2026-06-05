@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from skills.account_data_skills import ACCOUNT_DATA_SKILLS
 from skills.base import SkillContext, SkillRegistry, SkillResult
 from skills.content_skills import CONTENT_SKILLS
 from skills.draft_skills import DRAFT_SKILLS
@@ -11,6 +12,7 @@ from skills.session_skills import SESSION_SKILLS
 def build_default_registry() -> SkillRegistry:
     registry = SkillRegistry()
     for skill in [
+        *ACCOUNT_DATA_SKILLS,
         *IMAGE_SKILLS,
         *CONTENT_SKILLS,
         *DRAFT_SKILLS,

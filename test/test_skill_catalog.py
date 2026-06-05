@@ -17,6 +17,7 @@ def main():
         "generate_images",
         "plan_note_text",
         "create_note_draft",
+        "collect_latest_published_note_metrics",
         "open_creator_page",
         "get_page_state",
         "explore_page_task",
@@ -46,8 +47,14 @@ def main():
     if draft.get("executor_type") != "workflow":
         raise AssertionError("create_note_draft should be workflow skill")
 
+    collector = specs["collect_latest_published_note_metrics"]
+    if collector.get("executor_agent") != "web_note_metrics_collector":
+        raise AssertionError("collect_latest_published_note_metrics should use web_note_metrics_collector")
+    if "account_data" not in collector.get("tags", []):
+        raise AssertionError("collect_latest_published_note_metrics should advertise account data support")
+
     catalog = render_skill_catalog()
-    for text in ("executor=agent/page_explorer", "requires_confirmation_for", "comments"):
+    for text in ("executor=agent/page_explorer", "requires_confirmation_for", "comments", "web_note_metrics_collector"):
         if text not in catalog:
             raise AssertionError(f"rendered catalog missing: {text}")
 

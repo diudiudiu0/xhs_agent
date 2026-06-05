@@ -1,0 +1,73 @@
+# Account data collection configuration.
+#
+# Keep page labels, selectors, output paths, and extraction patterns here so
+# Python files stay focused on execution logic.
+
+published_note_metrics:
+  output_file: data/xhs_published_note_metrics.json
+  default_note_index: 0
+  navigation:
+    profile_entry_texts: ["我"]
+    note_tab_texts: ["笔记"]
+    wait_after_navigation_ms: 2200
+    wait_after_note_open_ms: 3000
+    note_cards_ready_timeout_ms: 12000
+    detail_ready_timeout_ms: 12000
+    settle_after_ready_ms: 800
+  selectors:
+    note_card_selectors:
+      - 'a[href*="/explore/"]'
+      - 'a[href*="/discovery/item/"]'
+      - '[class*="note-item"]'
+      - '[class*="NoteItem"]'
+      - '[class*="cover"]'
+    title_selectors:
+      - '#detail-title'
+      - '[class*="title"]'
+      - 'h1'
+      - 'h2'
+    interaction_selectors:
+      - 'button'
+      - '[role="button"]'
+      - '[aria-label]'
+      - '[title]'
+      - '[class*="interact"]'
+      - '[class*="like"]'
+      - '[class*="collect"]'
+      - '[class*="comment"]'
+      - '[class*="share"]'
+    comment_selectors:
+      - '.comment-item'
+      - '[class*="comment-item"]'
+      - '[class*="CommentItem"]'
+      - '[class*="commentItem"]'
+      - '[data-testid*="comment"]'
+  extraction:
+    max_comment_items: 80
+    max_text_candidates: 220
+    published_at_patterns:
+      - '发布于\s*([^\n\r]+)'
+      - '编辑于\s*([^\n\r]+)'
+      - '((?:今天|昨天|前天)\s*\d{1,2}:\d{2}(?:\s*[\u4e00-\u9fff]{1,6})?)'
+      - '(\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日号]?\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[\u4e00-\u9fff]{1,6})?)'
+      - '(\d{1,2}[-/月]\d{1,2}[日号]?\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[\u4e00-\u9fff]{1,6})?)'
+      - '(\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日\s]+(?:\d{1,2}:\d{2}(?::\d{2})?)?)'
+      - '(\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日号]?)'
+      - '(\d{1,2}[-/月]\d{1,2}[日号]?)'
+    comment_count_patterns:
+      - '共\s*([0-9]+(?:\.[0-9]+)?\s*[万wWkK]?)\s*条评论'
+      - '([0-9]+(?:\.[0-9]+)?\s*[万wWkK]?)\s*条评论'
+      - '评论\s*([0-9]+(?:\.[0-9]+)?\s*[万wWkK]?)'
+    metric_keywords:
+      like: ["点赞", "赞", "喜欢", "like"]
+      collect: ["收藏", "collect", "favorite"]
+      share: ["分享", "转发", "share"]
+      comment: ["评论", "comment", "回复"]
+    comment_exclude_terms:
+      - "展开"
+      - "收起"
+      - "发送"
+      - "取消"
+      - "说点什么"
+      - "登录"
+      - "相关推荐"

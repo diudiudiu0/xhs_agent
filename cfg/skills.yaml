@@ -201,6 +201,52 @@ skills:
       default_title: 使用配置或生成标题
       next_suggestion: 可以查看草稿箱确认保存结果，或继续生成下一篇选题。
 
+  collect_latest_published_note_metrics:
+    description: 打开或复用小红书主站，进入“我 -> 笔记”，点击最上方一条已发布笔记，采集发布时间、标题、评论、评论数量、收藏数、点赞数和分享数，并按标题和发布时间去重保存到本地 JSON。
+    executor_type: workflow
+    executor_agent: web_note_metrics_collector
+    autonomy_level: medium
+    manager_role: manager 在用户要求采集主页最新笔记数据、查看已发布笔记互动数据、沉淀评论与互动指标时调用；该 workflow 负责网页导航、数据提取和本地去重保存。
+    input_schema:
+      note_index: 可选。个人主页笔记列表中的索引，0 表示最上方第一条。
+      output_file: 可选。保存 JSON 的本机路径；为空时使用 cfg/account_data.yaml 中的 output_file。
+    output_schema:
+      note: 采集到的单篇笔记数据。
+      storage: JSON 写入结果，包括 added、duplicate、output_file 和 note_count。
+    preconditions:
+      - 需要先运行 test/login_xhs_home_init.py 完成小红书主站登录。
+      - 小红书主站持久浏览器 profile 不能被其他脚本占用。
+    memory_reads:
+      - browser_session
+      - account_data_config
+    memory_writes:
+      - last_collected_note_metrics
+      - last_collected_note_metrics_file
+    risk_policy:
+      requires_confirmation_for: []
+    risk_level: low
+    side_effects:
+      - opens_browser_if_needed
+      - reads_web_page
+      - writes_local_json
+    tags:
+      - account_data
+      - metrics
+      - published_notes
+      - comments
+      - web_site
+      - workflow
+    examples:
+      - 采集我主页最新一篇笔记的数据
+      - 打开我发布的第一篇笔记，保存点赞收藏评论和分享数
+      - 把最新笔记评论数据写到 json
+    messages:
+      success: 已采集并保存最新笔记数据：{title} -> {output_file}
+      duplicate: 检测到同标题同发布时间的记录已存在，未重复写入：{title}
+      observation_title: 标题：{title}
+      observation_time: 发布时间：{published_at}
+      observation_counts: 点赞={like_count} 收藏={collect_count} 评论={comment_count} 分享={share_count}
+
   open_creator_page:
     description: 打开或复用小红书网页会话，可以打开创作中心 creator，也可以打开小红书主站 web，并保存到技能会话上下文中。
     executor_type: tool
