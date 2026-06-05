@@ -55,7 +55,7 @@ playwright install chromium
 首次使用前先运行登录脚本：
 
 ```bash
-python test/browser_session_control.py --target both --mode login
+python test/integration/browser_session_control.py --target both --mode login
 ```
 
 浏览器打开后，请手动完成扫码或账号登录。登录成功后输入 `s` 保存状态。创作中心会保存到 `auth.json` 和 `.browser_profile/xhs_creator`，小红书主站会保存到 `auth_xhs_web.json` 和 `.browser_profile/xhs_web`。
@@ -65,15 +65,15 @@ python test/browser_session_control.py --target both --mode login
 如果只需要初始化其中一个站点，可以运行：
 
 ```bash
-python test/browser_session_control.py --target creator --mode login
-python test/browser_session_control.py --target web --mode login
+python test/integration/browser_session_control.py --target creator --mode login
+python test/integration/browser_session_control.py --target web --mode login
 ```
 
 如果只是想打开浏览器并保持不关闭，用：
 
 ```bash
-python test/browser_session_control.py --target creator --mode keep-open
-python test/browser_session_control.py --target web --mode keep-open
+python test/integration/browser_session_control.py --target creator --mode keep-open
+python test/integration/browser_session_control.py --target web --mode keep-open
 ```
 
 ## 创建草稿测试
@@ -81,7 +81,7 @@ python test/browser_session_control.py --target web --mode keep-open
 运行测试：
 
 ```bash
-python test/test_create_draft.py
+python test/integration/test_create_draft.py
 ```
 
 发布类型、标题、主题、正文要点、图片/视频素材目录都在 `cfg/task.yaml` 的 `note_tasks` 中配置。
@@ -94,7 +94,7 @@ python test/test_create_draft.py
 如果希望通过终端与小红书个人账号 Agent 对话，运行：
 
 ```bash
-python test/xhs_terminal_agent.py
+python test/integration/xhs_terminal_agent.py
 ```
 
 终端 Agent 会维护当前会话记忆，已封装的技能包括：
@@ -143,7 +143,7 @@ watermark: false
 运行测试：
 
 ```bash
-python test/test_image_generation.py
+python test/integration/test_image_generation.py
 ```
 
 输出文件会自动按 `1.png`、`2.png`、`3.png` 顺序保存到指定目录。生成好的目录可以直接填入 `cfg/task.yaml` 的 `note_tasks.<任务名>.input.image_folder`，用于后续图文笔记发布。
@@ -151,7 +151,7 @@ python test/test_image_generation.py
 如果希望把图片生成和创建小红书图文草稿串起来，运行：
 
 ```bash
-python test/test_generate_images_and_create_draft.py
+python test/integration/test_generate_images_and_create_draft.py
 ```
 
 这个流程会先执行 `cfg/image_task.yaml` 中的图片生成流水线，再把本次生成出的图片路径按数字文件名顺序传给发帖 Agent，随后进入创作中心上传图片、填写标题、扩写/填写正文并暂存离开。这里不会从输出目录随机抽图。
@@ -167,7 +167,7 @@ python test/test_generate_images_and_create_draft.py
 如果想先让视觉大模型读取现有图片，再自动写出图片生成提示词，然后把这个提示词交给图片生成模型出图，运行：
 
 ```bash
-python test/test_image_prompt_generation.py
+python test/integration/test_image_prompt_generation.py
 ```
 
 这个流程由三个配置区域组合完成：
@@ -178,11 +178,11 @@ python test/test_image_prompt_generation.py
 
 `input_image_source: local` 时读取本机图片，`input_image_source: url` 时读取网络图片地址。视觉模型配置在 `cfg/model_config.py` 的 `VISION_PROMPT_MODEL_CONFIG` 中，默认按 Moonshot/Kimi 的 OpenAI-compatible 接口配置。
 
-如果希望智能式批量生成图片，把 `image_generation_tasks.<任务名>.count` 改成目标数量，例如 `3`。在 `test/test_image_prompt_generation.py` 这条组合流程里，程序不会简单地用同一个 prompt 生成 3 张相似图，而是会把数量传给视觉模型，让它先根据 `image_prompt_tasks.<任务名>.batch_prompt_plan` 写出 3 条不同用途的 prompt，例如封面图、产品主体介绍图、使用场景图，再由 DeepSeek 格式化为稳定 JSON，最后逐条 prompt 单独生成图片。视觉模型提示词、重试提示词和格式化提示词都在 `cfg/image_task.yaml` 中维护。
+如果希望智能式批量生成图片，把 `image_generation_tasks.<任务名>.count` 改成目标数量，例如 `3`。在 `test/integration/test_image_prompt_generation.py` 这条组合流程里，程序不会简单地用同一个 prompt 生成 3 张相似图，而是会把数量传给视觉模型，让它先根据 `image_prompt_tasks.<任务名>.batch_prompt_plan` 写出 3 条不同用途的 prompt，例如封面图、产品主体介绍图、使用场景图，再由 DeepSeek 格式化为稳定 JSON，最后逐条 prompt 单独生成图片。视觉模型提示词、重试提示词和格式化提示词都在 `cfg/image_task.yaml` 中维护。
 
 ## 主要文件
 
-- `test/browser_session_control.py`：统一管理创作中心和小红书主站的手动登录、状态保存和浏览器保持打开。
+- `test/integration/browser_session_control.py`：统一管理创作中心和小红书主站的手动登录、状态保存和浏览器保持打开。
 - `src/browser_session.py`：启动浏览器并进入创作中心。
 - `src/interactive_element_extractor.py`：提取当前页面可交互元素。
 - `src/browser_tools.py`：点击、填写、等待、上传图片/视频等浏览器动作。
@@ -190,17 +190,17 @@ python test/test_image_prompt_generation.py
 - `src/note_content_service.py`：调用模型根据页面元素规划下一步动作，并扩写正文。
 - `src/note_draft_workflow.py`：创建小红书草稿的主流程。
 - `src/xhs_skill_runtime.py`：终端 Agent 的技能封装层，统一调用提示词生成、提示词修改、图片生成、页面状态和创建草稿。
-- `test/xhs_terminal_agent.py`：小红书个人账号终端交互 Agent 入口。
+- `test/integration/xhs_terminal_agent.py`：小红书个人账号终端交互 Agent 入口。
 - `src/image_generation_service.py`：图片生成/编辑方法实现，不负责具体测试入口。
 - `src/image_prompt_agent.py`：根据现有图片生成图片生成提示词，并调用图片生成流程出图。
-- `test/test_image_generation.py`：读取 `cfg/image_task.yaml` 的图片生成任务配置并执行一次生成/编辑测试。
-- `test/test_image_prompt_generation.py`：读取 `image_prompt_pipeline_tasks`，先执行看图提示词任务，再执行图片生成任务。
-- `test/test_generate_images_and_create_draft.py`：先生成图片素材，再按顺序上传这些图片并创建图文草稿。
+- `test/integration/test_image_generation.py`：读取 `cfg/image_task.yaml` 的图片生成任务配置并执行一次生成/编辑测试。
+- `test/integration/test_image_prompt_generation.py`：读取 `image_prompt_pipeline_tasks`，先执行看图提示词任务，再执行图片生成任务。
+- `test/integration/test_generate_images_and_create_draft.py`：先生成图片素材，再按顺序上传这些图片并创建图文草稿。
 - `cfg/model_config.py`：文本模型和图片模型的服务商、API Key、base_url、模型名和生成参数配置。
 - `cfg/task.yaml`：小红书发帖任务的任务参数、素材路径、规划规则、正文扩写提示词和兜底文案配置。
 - `cfg/image_task.yaml`：图片生成、看图写 prompt、批量 prompt 策划、视觉提示词模板和格式化提示词模板配置。
 - `cfg/terminal_actions.yaml`：终端 Agent 的 action 目录，配置每个核心能力的说明、适用场景、禁用场景和示例，用于让模型判断用户请求应该调用哪个能力。
-- `test/test_create_draft.py`：创建草稿的端到端测试入口。
+- `test/integration/test_create_draft.py`：创建草稿的端到端测试入口。
 
 ## 常见问题
 
@@ -229,11 +229,12 @@ python test/test_image_prompt_generation.py
 重新运行：
 
 ```bash
-python test/browser_session_control.py --target both --mode login
+python test/integration/browser_session_control.py --target both --mode login
 ```
 
 然后再次运行测试。
 
 ### 草稿看起来没有保存
 
-小红书图文草稿依赖当前浏览器本地数据。请确认先运行过 `python test/browser_session_control.py --target creator --mode login`，并且后续测试使用默认的持久浏览器目录 `.browser_profile/xhs_creator`。不要手动删除 `.browser_profile`，也不要在浏览器中清除站点数据，否则本地草稿可能丢失。
+小红书图文草稿依赖当前浏览器本地数据。请确认先运行过 `python test/integration/browser_session_control.py --target creator --mode login`，并且后续测试使用默认的持久浏览器目录 `.browser_profile/xhs_creator`。不要手动删除 `.browser_profile`，也不要在浏览器中清除站点数据，否则本地草稿可能丢失。
+

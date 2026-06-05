@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -17,7 +17,13 @@ def main():
         "generate_images",
         "plan_note_text",
         "create_note_draft",
+        "collect_note_metrics",
         "collect_latest_published_note_metrics",
+        "analyze_account_performance",
+        "plan_content_topics",
+        "reply_comments",
+        "schedule_content_calendar",
+        "review_risky_action",
         "open_creator_page",
         "get_page_state",
         "explore_page_task",
@@ -53,8 +59,32 @@ def main():
     if "account_data" not in collector.get("tags", []):
         raise AssertionError("collect_latest_published_note_metrics should advertise account data support")
 
+    for name in (
+        "collect_note_metrics",
+        "analyze_account_performance",
+        "plan_content_topics",
+        "reply_comments",
+        "schedule_content_calendar",
+        "review_risky_action",
+    ):
+        if name not in specs:
+            raise AssertionError(f"missing account-management skill: {name}")
+
+    if specs["reply_comments"].get("executor_agent") != "page_explorer":
+        raise AssertionError("reply_comments should delegate to page_explorer")
+    if specs["review_risky_action"].get("executor_agent") != "account_management_service":
+        raise AssertionError("review_risky_action should use account_management_service")
+
     catalog = render_skill_catalog()
-    for text in ("executor=agent/page_explorer", "requires_confirmation_for", "comments", "web_note_metrics_collector"):
+    for text in (
+        "executor=agent/page_explorer",
+        "requires_confirmation_for",
+        "comments",
+        "web_note_metrics_collector",
+        "account_management_service",
+        "collect_note_metrics",
+        "review_risky_action",
+    ):
         if text not in catalog:
             raise AssertionError(f"rendered catalog missing: {text}")
 

@@ -1,0 +1,58 @@
+# Account-management task defaults.
+#
+# This file stores parameters that change with account strategy. Python code
+# should read these values instead of hard-coding business preferences.
+
+account_manager:
+  metrics:
+    default_metrics_file: data/xhs_published_note_metrics.json
+    top_note_count: 5
+    weights:
+      like: 1
+      collect: 2
+      comment: 3
+      share: 2
+
+  topic_planning:
+    default_topic_count: 5
+    default_focus: 脚轮商品推荐
+    output_file: data/content_topics.json
+    topic_templates:
+      - title: "{keyword}选购避坑指南"
+        angle: "把用户最容易踩坑的参数讲清楚，适合收藏。"
+      - title: "{keyword}场景搭配清单"
+        angle: "按仓储、工具车、家具改造、展示架等场景给出选择建议。"
+      - title: "{keyword}参数对比图文"
+        angle: "用承重、材质、刹车、静音、安装方式做横向对比。"
+      - title: "{keyword}真实使用反馈"
+        angle: "结合评论区问题，做更贴近日常使用的推荐。"
+      - title: "{keyword}低成本升级方案"
+        angle: "突出小配件提升推车、货架和工作台体验。"
+
+  calendar:
+    output_file: data/content_calendar.json
+    default_days_between_posts: 2
+    default_status: planned
+
+  risk_review:
+    high_risk_terms:
+      - 删除
+      - 清空
+      - 发布
+      - 发送
+      - 回复
+      - 私信
+      - 覆盖
+      - 撤回
+    medium_risk_terms:
+      - 编辑
+      - 保存
+      - 暂存
+      - 修改
+      - 上传
+    low_risk_terms:
+      - 查看
+      - 分析
+      - 读取
+      - 采集
+      - 生成

@@ -22,18 +22,16 @@
 - `generate_images`
 - `plan_note_text`
 - `create_note_draft`
+- `collect_note_metrics`
+- `collect_latest_published_note_metrics`
+- `analyze_account_performance`
+- `plan_content_topics`
+- `reply_comments`
+- `schedule_content_calendar`
+- `review_risky_action`
 - `open_creator_page`
 - `get_page_state`
 - `explore_page_task`
 - `handle_dialogs`
 - `show_session_memory`
 - `close_session`
-
-后续建议新增：
-
-- `collect_note_metrics`
-- `analyze_account_performance`
-- `plan_content_topics`
-- `reply_comments`
-- `schedule_content_calendar`
-- `review_risky_action`

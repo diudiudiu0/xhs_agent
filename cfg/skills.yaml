@@ -214,7 +214,7 @@ skills:
       note: 采集到的单篇笔记数据。
       storage: JSON 写入结果，包括 added、duplicate、output_file 和 note_count。
     preconditions:
-      - 需要先运行 test/browser_session_control.py --target web --mode login 完成小红书主站登录。
+      - 需要先运行 test/integration/browser_session_control.py --target web --mode login 完成小红书主站登录。
       - 小红书主站持久浏览器 profile 不能被其他脚本占用。
     memory_reads:
       - browser_session
@@ -246,6 +246,244 @@ skills:
       observation_title: 标题：{title}
       observation_time: 发布时间：{published_at}
       observation_counts: 点赞={like_count} 收藏={collect_count} 评论={comment_count} 分享={share_count}
+
+  collect_note_metrics:
+    description: 采集已发布笔记的数据指标。当前实现支持按个人主页笔记索引采集单篇笔记，默认采集最上方第一篇，并把结果按标题和发布日期去重写入 data/xhs_published_note_metrics.json。
+    executor_type: workflow
+    executor_agent: web_note_metrics_collector
+    autonomy_level: medium
+    manager_role: manager 在用户要求采集笔记互动数据、更新账号数据、读取最新笔记表现时调用；如果用户没有指定范围，默认采集最新一篇。
+    input_schema:
+      note_index: 可选。个人主页笔记列表中的索引，0 表示第一篇。
+      output_file: 可选。保存 JSON 的本机路径。
+    output_schema:
+      note: 采集到的单篇笔记数据。
+      storage: JSON 写入结果。
+    preconditions:
+      - 需要先运行 test/integration/browser_session_control.py --target web --mode login 完成小红书主站登录。
+    memory_reads:
+      - browser_session
+      - account_data_config
+    memory_writes:
+      - last_collected_note_metrics
+      - last_collected_note_metrics_file
+    risk_policy:
+      requires_confirmation_for: []
+    risk_level: low
+    side_effects:
+      - opens_browser_if_needed
+      - reads_web_page
+      - writes_local_json
+    tags:
+      - account_data
+      - metrics
+      - published_notes
+      - comments
+      - web_site
+      - workflow
+    examples:
+      - 采集我最新一篇笔记的数据
+      - 更新主页第一篇笔记的互动指标
+    messages:
+      success: 已采集笔记数据：{title} -> {output_file}
+      duplicate: 检测到同标题同发布日期的记录已存在，未重复写入：{title}
+      observation_title: 标题：{title}
+      observation_counts: 点赞={like_count} 收藏={collect_count} 评论={comment_count} 分享={share_count}
+
+  analyze_account_performance:
+    description: 读取 data/xhs_published_note_metrics.json，对账号已采集笔记进行表现分析，包括总指标、平均指标、高互动笔记、关键词、评论样本和运营洞察。
+    executor_type: tool
+    executor_agent: account_management_service
+    autonomy_level: low
+    manager_role: manager 在用户要求分析账号表现、复盘笔记数据、判断内容方向时调用。
+    input_schema:
+      metrics_file: 可选。笔记指标 JSON 文件路径。
+      top_n: 可选。返回前几篇高互动笔记。
+    output_schema:
+      note_count: 已分析笔记数。
+      totals: 总点赞、收藏、评论、分享。
+      averages: 平均指标。
+      top_notes: 高互动笔记列表。
+      insights: 运营洞察。
+    preconditions:
+      - 最好已经采集过至少一篇笔记数据。
+    memory_reads:
+      - note_metrics_data
+    memory_writes:
+      - last_account_analysis
+    risk_policy:
+      requires_confirmation_for: []
+    risk_level: low
+    side_effects:
+      - reads_local_json
+      - updates_session_memory
+    tags:
+      - account_data
+      - analysis
+      - metrics
+      - strategy
+    examples:
+      - 分析账号最近笔记表现
+      - 根据采集数据看看哪篇笔记最好
+    messages:
+      success: 已完成账号表现分析，共分析 {note_count} 篇笔记。
+      observation_totals: 总点赞={like_count} 总收藏={collect_count} 总评论={comment_count} 总分享={share_count}
+
+  plan_content_topics:
+    description: 基于账号表现分析、评论样本和账号方向，生成下一批小红书内容选题，并保存到 data/content_topics.json。
+    executor_type: tool
+    executor_agent: account_management_service
+    autonomy_level: medium
+    manager_role: manager 在用户要求规划选题、制定下一批内容方向、根据数据给出创意时调用。
+    input_schema:
+      topic_count: 可选。需要生成的选题数量。
+      focus: 可选。账号当前内容方向。
+      output_file: 可选。选题保存路径。
+    output_schema:
+      topics: 选题列表。
+      output_file: 保存文件。
+    preconditions:
+      - 可以先调用 analyze_account_performance；如果没有分析结果，该 skill 会自动读取本地指标数据。
+    memory_reads:
+      - last_account_analysis
+      - note_metrics_data
+    memory_writes:
+      - planned_content_topics
+      - planned_content_topics_file
+    risk_policy:
+      requires_confirmation_for: []
+    risk_level: low
+    side_effects:
+      - reads_local_json
+      - writes_local_json
+      - updates_session_memory
+    tags:
+      - planning
+      - topics
+      - content_strategy
+    examples:
+      - 根据账号数据规划 5 个脚轮选题
+      - 给我下一周的商品推荐选题
+    messages:
+      success: 已生成 {count} 个内容选题：{output_file}
+
+  schedule_content_calendar:
+    description: 将候选选题排成内容发布日历，默认每隔两天安排一篇，并保存到 data/content_calendar.json。
+    executor_type: tool
+    executor_agent: account_management_service
+    autonomy_level: low
+    manager_role: manager 在用户要求排期、制定发布计划、把选题安排到日历时调用。
+    input_schema:
+      start_date: 可选。起始日期，格式 YYYY-MM-DD。
+      days_between_posts: 可选。每篇间隔天数。
+      output_file: 可选。日历保存路径。
+    output_schema:
+      items: 排期列表。
+      output_file: 保存文件。
+    preconditions:
+      - 最好已有 planned_content_topics；没有时会自动生成默认选题。
+    memory_reads:
+      - planned_content_topics
+    memory_writes:
+      - content_calendar
+      - content_calendar_file
+    risk_policy:
+      requires_confirmation_for: []
+    risk_level: low
+    side_effects:
+      - writes_local_json
+      - updates_session_memory
+    tags:
+      - planning
+      - calendar
+      - scheduling
+    examples:
+      - 把这些选题排成下周日历
+      - 从明天开始每两天安排一篇
+    messages:
+      success: 已生成内容日历，共 {count} 条：{output_file}
+
+  reply_comments:
+    description: 专用评论回复 skill。manager 提供回复目标、回复要求和可选评论上下文；该 skill 会把任务交给页面探索 agent 在小红书主站中完成评论定位、输入和发送前确认。
+    executor_type: agent
+    executor_agent: page_explorer
+    autonomy_level: high
+    manager_role: manager 在用户明确要求回复评论时调用，而不是直接调用通用 explore_page_task；该 skill 会构造更清晰的评论回复目标。
+    input_schema:
+      target_comment: 可选。目标评论或评论作者。
+      reply_text: 可选。用户指定回复内容；为空时由页面探索 agent 根据上下文生成。
+      user_goal: 可选。完整自然语言目标。
+      max_steps: 可选。最大探索步数。
+    output_schema:
+      answer: 回复任务结果。
+      steps: 页面探索步骤。
+    preconditions:
+      - 需要小红书主站可用。
+      - 发送回复属于公开账号动作，执行发送前必须确认。
+    memory_reads:
+      - browser_session
+      - last_collected_note_metrics
+      - page_context
+    memory_writes:
+      - page_task_answer
+      - page_task_steps
+    risk_policy:
+      requires_confirmation_for:
+        - send_reply
+      confirmation_owner: page_explorer
+    risk_level: high
+    side_effects:
+      - opens_browser_if_needed
+      - clicks_page
+      - may_send_public_reply
+    tags:
+      - comments
+      - reply
+      - web_site
+      - page
+      - specialist_agent
+    examples:
+      - 根据喜仔的评论回复他
+      - 回复最新一条评论，语气友好一点
+    messages:
+      missing_goal: target_comment、reply_text、user_goal 至少需要一个。
+      success: 评论回复任务已完成。
+      failed: 评论回复任务未完成。
+
+  review_risky_action:
+    description: 独立风险审核 skill。根据动作描述和上下文判断风险等级、是否需要用户确认，以及触发风险的关键词。
+    executor_type: tool
+    executor_agent: account_management_service
+    autonomy_level: low
+    manager_role: manager 在删除、发布、发送回复、覆盖内容、修改草稿等动作前调用，作为是否需要确认的辅助判断。
+    input_schema:
+      action_description: 必填。准备执行的动作描述。
+      context: 可选。相关上下文。
+    output_schema:
+      risk_level: low、medium 或 high。
+      requires_confirmation: 是否需要用户确认。
+      recommendation: 审核建议。
+    preconditions: []
+    memory_reads:
+      - current_goal
+      - page_context
+    memory_writes:
+      - last_risk_review
+    risk_policy:
+      requires_confirmation_for: []
+    risk_level: low
+    side_effects:
+      - updates_session_memory
+    tags:
+      - risk
+      - confirmation
+      - safety
+      - tool
+    examples:
+      - 审核“删除第三篇草稿”是否需要确认
+      - 判断“发送这条评论回复”风险
+    messages:
+      success: 风险审核完成：{risk_level}，需要确认={requires_confirmation}
 
   open_creator_page:
     description: 打开或复用小红书网页会话，可以打开创作中心 creator，也可以打开小红书主站 web，并保存到技能会话上下文中。
@@ -469,3 +707,4 @@ skills:
     messages:
       success: 已关闭当前技能会话。
       observation: 当前技能会话已关闭。
+

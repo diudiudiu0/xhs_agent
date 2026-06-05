@@ -10,7 +10,7 @@ active_image_prompt_pipeline_task: caster_product_pipeline
 image_generation_tasks:
   image_asset_generation:
     # 必填项：prompt 为空会直接停止。
-    # 组合流程 test/test_image_prompt_generation.py 会用视觉模型生成的 prompt 覆盖这里的 prompt。
+    # 组合流程 test/integration/test_image_prompt_generation.py 会用视觉模型生成的 prompt 覆盖这里的 prompt。
     required_fields:
       - prompt
       - output_dir
@@ -26,8 +26,8 @@ image_generation_tasks:
     output_dir: doc/generated_images
 
     # 生成数量：
-    # - test/test_image_generation.py：同一条 prompt 生成 count 张候选图。
-    # - test/test_image_prompt_generation.py：先生成 count 条不同用途的 prompt，再逐条出图。
+    # - test/integration/test_image_generation.py：同一条 prompt 生成 count 张候选图。
+    # - test/integration/test_image_prompt_generation.py：先生成 count 条不同用途的 prompt，再逐条出图。
     count: 3
 
     # 图片尺寸/比例：
@@ -55,7 +55,6 @@ image_prompt_tasks:
       每条提示词需要具体描述主体、构图、背景、光影、质感、商业海报风格、比例和需要避免的问题。
       注意采用单主体原则，比如图片中有四个脚轮，但生成图主体只需要一个脚轮。
       要突出脚轮细节和质感，背景可以有使用场景但要虚化且不喧宾夺主。
-     
 
     user_goal: |
       根据我提供的图片，生成专业的 ZEABO M6 黑色刹车轮商业海报图组。
@@ -72,6 +71,7 @@ image_prompt_tasks:
       如果目标图片数量为 3，第1张作为文章封面，色调干净明亮、有强记忆点和标题留白；第2张作为主体轮子介绍图，突出单个脚轮的细节、金属丝杆、黑色轮体和刹车结构，以及包括参数等信息。；第3张作为使用场景图，突出办公椅、货架或工具车等真实应用场景，背景虚化但能说明用途。
       如果目标图片数量超过 3，继续扩展为安装方式、承重/静音卖点对比、材质细节特写、场景组合图等。
       注意每张图都需要标明品牌！主体中如果含有刚性材料如果插杆和螺纹丝杆要注意生成的图片不能是其弯曲，背景需要与主体过渡协调。
+
     # 视觉模型提示词模板：负责看图和创意描述，不要求它必须稳定返回 JSON。
     vision_prompt_template: |
       {instruction}

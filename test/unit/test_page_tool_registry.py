@@ -1,11 +1,11 @@
-﻿# test/test_page_tool_registry.py
+﻿# test/unit/test_page_tool_registry.py
 import sys
 from pathlib import Path
 
 
-TEST_DIR = Path(__file__).resolve().parent
-if str(TEST_DIR) not in sys.path:
-    sys.path.insert(0, str(TEST_DIR))
+TEST_ROOT = Path(__file__).resolve().parents[1]
+if str(TEST_ROOT) not in sys.path:
+    sys.path.insert(0, str(TEST_ROOT))
 
 import _bootstrap  # noqa: F401
 
@@ -77,3 +77,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

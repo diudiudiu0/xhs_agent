@@ -1,11 +1,10 @@
-# test/test_page_context.py
 import sys
 from pathlib import Path
 
 
-TEST_DIR = Path(__file__).resolve().parent
-if str(TEST_DIR) not in sys.path:
-    sys.path.insert(0, str(TEST_DIR))
+TEST_ROOT = Path(__file__).resolve().parents[1]
+if str(TEST_ROOT) not in sys.path:
+    sys.path.insert(0, str(TEST_ROOT))
 
 import _bootstrap  # noqa: F401
 
@@ -15,11 +14,11 @@ from src.page_context import PageContextManager
 
 def main():
     if PAGE_CONTEXT_MODEL_CONFIG.get("model") != "deepseek-v4-flash":
-        raise AssertionError("page_context 模型应配置为 deepseek-v4-flash")
+        raise AssertionError("page_context model should be deepseek-v4-flash")
 
     manager = PageContextManager()
     manager.reset(
-        "根据评论和所属帖子回复评论",
+        "reply to a comment based on the related note content",
         {
             "site": "web",
             "page_phase": "web_note_detail",
@@ -42,12 +41,12 @@ def main():
     }
     missing = required_keys - set(context)
     if missing:
-        raise AssertionError(f"page_context 缺少字段：{sorted(missing)}")
+        raise AssertionError(f"page_context missing fields: {sorted(missing)}")
     if context["site"] != "web":
-        raise AssertionError("page_context site 未正确同步")
+        raise AssertionError("page_context site was not synchronized")
     if not manager.render():
-        raise AssertionError("page_context render 为空")
-    print("page_context 配置和默认结构校验通过")
+        raise AssertionError("page_context render is empty")
+    print("page_context config and default structure check passed")
     print(manager.brief())
 
 
