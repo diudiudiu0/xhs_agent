@@ -55,20 +55,26 @@ playwright install chromium
 首次使用前先运行登录脚本：
 
 ```bash
-python test/login_init.py
+python test/browser_session_control.py --target both --mode login
 ```
 
-浏览器打开后，请手动完成扫码或账号登录。登录成功后程序会把登录状态保存到项目根目录的 `auth.json`，同时写入 `.browser_profile/xhs_creator` 持久浏览器目录。
+浏览器打开后，请手动完成扫码或账号登录。登录成功后输入 `s` 保存状态。创作中心会保存到 `auth.json` 和 `.browser_profile/xhs_creator`，小红书主站会保存到 `auth_xhs_web.json` 和 `.browser_profile/xhs_web`。
 
 小红书创作中心提示“草稿存储于当前使用的浏览器本地”。因此本项目默认使用 Playwright persistent context 复用同一个浏览器数据目录，而不是每次只用 `auth.json` 创建全新的临时 context。这样更适合保存和继续观察本地草稿。
 
-如果需要进入小红书主站，用于后续读取个人主页、笔记详情、评论和回复评论，运行：
+如果只需要初始化其中一个站点，可以运行：
 
 ```bash
-python test/login_xhs_home_init.py
+python test/browser_session_control.py --target creator --mode login
+python test/browser_session_control.py --target web --mode login
 ```
 
-该脚本会打开 `https://www.xiaohongshu.com/`，登录状态保存到 `auth_xhs_web.json`，持久浏览器目录为 `.browser_profile/xhs_web`。这套数据与创作中心的 `.browser_profile/xhs_creator` 分开维护。
+如果只是想打开浏览器并保持不关闭，用：
+
+```bash
+python test/browser_session_control.py --target creator --mode keep-open
+python test/browser_session_control.py --target web --mode keep-open
+```
 
 ## 创建草稿测试
 
@@ -176,7 +182,7 @@ python test/test_image_prompt_generation.py
 
 ## 主要文件
 
-- `test/login_init.py`：手动登录，保存 `auth.json`，并初始化 `.browser_profile/xhs_creator` 持久浏览器目录。
+- `test/browser_session_control.py`：统一管理创作中心和小红书主站的手动登录、状态保存和浏览器保持打开。
 - `src/browser_session.py`：启动浏览器并进入创作中心。
 - `src/interactive_element_extractor.py`：提取当前页面可交互元素。
 - `src/browser_tools.py`：点击、填写、等待、上传图片/视频等浏览器动作。
@@ -223,11 +229,11 @@ python test/test_image_prompt_generation.py
 重新运行：
 
 ```bash
-python test/login_init.py
+python test/browser_session_control.py --target both --mode login
 ```
 
 然后再次运行测试。
 
 ### 草稿看起来没有保存
 
-小红书图文草稿依赖当前浏览器本地数据。请确认先运行过 `python test/login_init.py`，并且后续测试使用默认的持久浏览器目录 `.browser_profile/xhs_creator`。不要手动删除 `.browser_profile`，也不要在浏览器中清除站点数据，否则本地草稿可能丢失。
+小红书图文草稿依赖当前浏览器本地数据。请确认先运行过 `python test/browser_session_control.py --target creator --mode login`，并且后续测试使用默认的持久浏览器目录 `.browser_profile/xhs_creator`。不要手动删除 `.browser_profile`，也不要在浏览器中清除站点数据，否则本地草稿可能丢失。

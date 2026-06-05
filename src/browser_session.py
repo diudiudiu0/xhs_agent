@@ -92,7 +92,7 @@ async def open_creator_home(headless=False, persistent=True):
     因此创建草稿/继续观察草稿时应优先使用 persistent context。
     """
     if not persistent and not os.path.exists(AUTH_FILE):
-        raise FileNotFoundError("未找到登录状态文件，请先运行test下的login_init.py 手动登录。")
+        raise FileNotFoundError("未找到登录状态文件，请先运行 test/browser_session_control.py --target creator --mode login 手动登录。")
     p = await async_playwright().start()
 
     browser = None
@@ -152,7 +152,7 @@ async def open_xhs_home(headless=False, persistent=True):
     profile，避免与创作中心的本地草稿 profile 相互影响。
     """
     if not persistent and not os.path.exists(XHS_WEB_AUTH_FILE):
-        raise FileNotFoundError("未找到小红书主页登录状态文件，请先运行 test 下的小红书主页登录初始化脚本。")
+        raise FileNotFoundError("未找到小红书主页登录状态文件，请先运行 test/browser_session_control.py --target web --mode login 手动登录。")
     p = await async_playwright().start()
 
     browser = None

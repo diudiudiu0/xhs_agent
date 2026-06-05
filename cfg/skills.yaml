@@ -214,7 +214,7 @@ skills:
       note: 采集到的单篇笔记数据。
       storage: JSON 写入结果，包括 added、duplicate、output_file 和 note_count。
     preconditions:
-      - 需要先运行 test/login_xhs_home_init.py 完成小红书主站登录。
+      - 需要先运行 test/browser_session_control.py --target web --mode login 完成小红书主站登录。
       - 小红书主站持久浏览器 profile 不能被其他脚本占用。
     memory_reads:
       - browser_session
