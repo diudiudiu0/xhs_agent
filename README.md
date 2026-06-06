@@ -193,12 +193,18 @@ python test/integration/test_image_prompt_generation.py
 - `test/integration/xhs_terminal_agent.py`：小红书个人账号终端交互 Agent 入口。
 - `src/image_generation_service.py`：图片生成/编辑方法实现，不负责具体测试入口。
 - `src/image_prompt_agent.py`：根据现有图片生成图片生成提示词，并调用图片生成流程出图。
+- `src/memory_embedding.py`：长期记忆 embedding 编码和 `agent_memory/vector_store/*.faiss` 本地 FAISS 向量库。
+- `src/memory_retriever.py`：长期记忆 BM25、embedding、混合检索和可选重排。
+- `embedding/`：本地 embedding 模型目录，默认读取 `embedding/bge-small-zh-v1.5`。
 - `test/integration/test_image_generation.py`：读取 `cfg/image_task.yaml` 的图片生成任务配置并执行一次生成/编辑测试。
 - `test/integration/test_image_prompt_generation.py`：读取 `image_prompt_pipeline_tasks`，先执行看图提示词任务，再执行图片生成任务。
 - `test/integration/test_generate_images_and_create_draft.py`：先生成图片素材，再按顺序上传这些图片并创建图文草稿。
+- `test/integration/build_memory_embedding_index.py`：使用本地 embedding 模型构建或更新长期记忆向量库。
+- `test/integration/test_interactive_memory_retrieval.py`：交互式测试长期记忆检索效果。
 - `cfg/model_config.py`：文本模型和图片模型的服务商、API Key、base_url、模型名和生成参数配置。
 - `cfg/task.yaml`：小红书发帖任务的任务参数、素材路径、规划规则、正文扩写提示词和兜底文案配置。
 - `cfg/image_task.yaml`：图片生成、看图写 prompt、批量 prompt 策划、视觉提示词模板和格式化提示词模板配置。
+- `cfg/memory.yaml`：长期记忆检索策略、本地 embedding 模型路径和向量库路径配置。
 - `cfg/terminal_actions.yaml`：终端 Agent 的 action 目录，配置每个核心能力的说明、适用场景、禁用场景和示例，用于让模型判断用户请求应该调用哪个能力。
 - `test/integration/test_create_draft.py`：创建草稿的端到端测试入口。
 
@@ -223,6 +229,29 @@ python test/integration/test_image_prompt_generation.py
 如果 `provider="openai"`，也可以设置环境变量 `OPENAI_API_KEY`。
 
 如果 `provider="doubao"`，也可以设置环境变量 `ARK_API_KEY` 或 `VOLCENGINE_API_KEY`。
+
+### 本地 embedding 模型放在哪里
+
+默认放在：
+
+```text
+embedding/bge-small-zh-v1.5
+```
+
+并在 `cfg/memory.yaml` 中配置：
+
+```yaml
+model_name: embedding/bge-small-zh-v1.5
+cache_dir: embedding
+```
+
+构建长期记忆 FAISS 向量库：
+
+```bash
+python test/integration/build_memory_embedding_index.py
+```
+
+向量库写入 `agent_memory/vector_store/`。其中 `.faiss` 文件保存向量索引，`*_metadata.json` 保存向量编号到原始长期记忆的映射。模型文件本身不建议提交到 Git。
 
 ### 登录状态失效
 

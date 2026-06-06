@@ -678,6 +678,60 @@ skills:
       - 查看当前会话记忆
       - 现在有哪些已生成素材
 
+  search_long_term_memory:
+    description: 检索长期记忆，返回与当前请求相关的历史经验。支持 bm25、embedding、bm25_embedding、bm25_embedding_rerank 等策略；可用于测试 RAG 检索质量、解释 Agent 为什么复用某条经验，或在用户明确要求查看记忆时调用。
+    executor_type: tool
+    executor_agent: memory_retriever
+    autonomy_level: low
+    manager_role: manager 正常规划前会自动检索长期记忆；只有当用户要求查看、测试、调试、解释长期记忆检索结果，或需要主动选择检索策略时，才显式调用该 skill。
+    input_schema:
+      query: 必填。要检索的用户请求或任务目标。
+      target_agent: 可选。manager_agent 或 page_explorer_agent；为空时不过滤。
+      memory_types: 可选。manager_experience、page_path 等类型列表。
+      site: 可选。creator、web 或 unknown。
+      limit: 可选。返回条数。
+      retrieval_method: 可选。bm25、embedding、bm25_embedding、bm25_embedding_rerank；为空时读取 cfg/memory.yaml 的 default_method。
+      allow_fallback: 可选。所选策略不可用时是否回退到 fallback_method，默认 true。
+      save_chunks: 可选。是否把当前统一 memory chunks 写入 agent_memory/memory_chunks.json。
+      save_embedding_index: 可选。是否把当前 chunks 编码并写入 agent_memory/vector_store/ 下的 FAISS 向量库；缺失或变化的 chunk 才会重新编码。
+      rebuild_embedding_index: 可选。是否强制重建向量库；开启后会重新编码所有 chunk。
+    output_schema:
+      hits: 检索到的记忆片段列表。
+      count: 命中数量。
+      requested_method: manager 请求的检索策略。
+      effective_method: 实际执行的检索策略。
+      available_methods: 当前可用策略说明。
+      warnings: 策略回退或重排失败等提示。
+      artifacts: 可能包含 memory_chunks.json 或 agent_memory/vector_store/ 的路径。
+    preconditions:
+      - agent_memory/xhs_agent_worklog.json 或 agent_memory/xhs_exploration_memory.json 至少存在一个。
+    memory_reads:
+      - xhs_agent_worklog
+      - xhs_exploration_memory
+      - memory_chunks
+    memory_writes:
+      - last_memory_search
+    risk_policy:
+      requires_confirmation_for: []
+    risk_level: low
+    side_effects:
+      - reads_local_json
+      - may_write_memory_chunks
+      - updates_session_memory
+    tags:
+      - memory
+      - rag
+      - retrieval
+      - debug
+      - tool
+    examples:
+      - 检索和“查看草稿箱详情”相关的长期记忆
+      - 测试 page_explorer_agent 能检索到哪些草稿箱路径
+      - 把当前长期记忆转换成 memory_chunks.json
+    messages:
+      success: 已检索长期记忆，命中 {count} 条。
+      missing_query: query 不能为空。
+
   close_session:
     description: 关闭当前浏览器和 Playwright 会话，释放页面资源。
     executor_type: tool

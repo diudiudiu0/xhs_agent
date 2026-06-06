@@ -3,15 +3,26 @@
 from src.manager_config import manager_config_get
 from src.manager_state import ManagerState
 from src.agent_worklog import XhsWorkflow
+from src.memory_retriever import MemoryRetriever, load_memory_config
 
 
 class ManagerMemory:
     def __init__(self, workflow: XhsWorkflow | None = None):
         self.workflow = workflow or XhsWorkflow()
+        self.retriever = MemoryRetriever()
 
     def search(self, user_message: str) -> list[dict]:
         limit = int(manager_config_get("max_memory_hints", 4) or 4)
-        return self.workflow.search_experiences(user_message, limit=limit)
+        config = load_memory_config()
+        retrieval = config.get("retrieval") or {}
+        manager_config = retrieval.get("manager_agent") if isinstance(retrieval.get("manager_agent"), dict) else {}
+        return self.retriever.search(
+            user_message,
+            target_agent=str(manager_config.get("target_agent") or "manager_agent"),
+            memory_types=[str(item) for item in manager_config.get("memory_types") or ["manager_experience", "page_path"]],
+            limit=limit,
+            retrieval_method=str(manager_config.get("retrieval_method") or retrieval.get("default_method") or "bm25"),
+        )
 
     def remember_success(self, state: ManagerState):
         if state.status != "completed" or not state.final_answer:

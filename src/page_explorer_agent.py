@@ -20,6 +20,7 @@ from src.page_context import PageContextManager
 from src.page_tool_registry import PAGE_TOOL_REGISTRY, PageToolContext
 from src.prompt_config import get_prompt_config, get_prompt_list, render_prompt_template
 from src.native_dialog import close_native_dialog_with_escape, get_native_dialog_state
+from src.memory_retriever import MemoryRetriever, load_memory_config
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -141,6 +142,8 @@ class ExplorationMemory:
     def __init__(self, path: Path = EXPLORATION_MEMORY_PATH):
         self.path = path
         self.records: list[ExplorationRecord] = []
+        self.task_requests: list[str] = []
+        self.retriever = MemoryRetriever()
         self.load()
 
     def load(self):
@@ -152,20 +155,54 @@ class ExplorationMemory:
             return
         records = []
         for item in data.get("records", []):
-            steps = [ExplorationStep(**step) for step in item.get("path", [])]
-            item["path"] = steps
-            records.append(ExplorationRecord(**item))
+            try:
+                steps = [ExplorationStep(**step) for step in item.get("path", [])]
+                item["path"] = steps
+                records.append(ExplorationRecord(**item))
+            except TypeError:
+                continue
         self.records = records
+        task_requests = [
+            str(task).strip()
+            for task in data.get("task_requests", [])
+            if str(task).strip()
+        ]
+        if not task_requests:
+            task_requests = [record.task for record in self.records if record.task]
+        self.task_requests = list(dict.fromkeys(task_requests))
+        self._align_task_order()
+
+    def _align_task_order(self):
+        indexed: dict[str, ExplorationRecord] = {}
+        for record in self.records:
+            task = str(record.task or "").strip()
+            if not task or task in indexed:
+                continue
+            record.task = task
+            indexed[task] = record
+
+        ordered: list[ExplorationRecord] = []
+        for task in self.task_requests:
+            if task in indexed:
+                ordered.append(indexed.pop(task))
+        ordered.extend(indexed.values())
+        self.records = ordered[-80:]
+        self.task_requests = [record.task for record in self.records]
 
     def save(self):
+        self._align_task_order()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"records": [asdict(record) for record in self.records[-80:]]}
+        data = {
+            "task_requests": self.task_requests,
+            "records": [asdict(record) for record in self.records],
+        }
         self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def add(self, task: str, result: str, path: list[ExplorationStep]):
         if not result:
             return
         self.records.append(ExplorationRecord(task=task, result=result, path=deepcopy(path)))
+        self._align_task_order()
         self.save()
 
     def _tokens(self, text: str) -> set[str]:
@@ -175,6 +212,29 @@ class ExplorationMemory:
         return chinese_chars | latin_tokens
 
     def search(self, task: str, limit: int = 3) -> list[dict]:
+        config = load_memory_config()
+        retrieval = config.get("retrieval") or {}
+        page_config = retrieval.get("page_explorer_agent") if isinstance(retrieval.get("page_explorer_agent"), dict) else {}
+        hits = self.retriever.search(
+            task,
+            target_agent=str(page_config.get("target_agent") or "page_explorer_agent"),
+            memory_types=[str(item) for item in page_config.get("memory_types") or ["page_path"]],
+            limit=limit,
+            retrieval_method=str(page_config.get("retrieval_method") or retrieval.get("default_method") or "bm25"),
+        )
+        if hits:
+            return [
+                {
+                    "task": hit.get("user_request", ""),
+                    "result_preview": _compact_text(hit.get("result", ""), 300),
+                    "path": hit.get("steps") or [],
+                    "memory_id": hit.get("memory_id", ""),
+                    "match_score": hit.get("match_score", 0),
+                    "reuse_level": hit.get("reuse_level", ""),
+                }
+                for hit in hits
+            ]
+
         task_chars = self._tokens(task)
         scored = []
         for record in self.records:

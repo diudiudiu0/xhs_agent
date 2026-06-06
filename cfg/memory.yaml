@@ -1,0 +1,141 @@
+# Long-term memory retrieval config.
+#
+# This file controls how agent_memory files are converted into retrievable
+# chunks and how Manager/PageExplorer choose a retrieval strategy.
+# Natural-language retrieval policy lives here so Python files stay focused on
+# data handling and scoring logic.
+
+memory:
+  files:
+    worklog: agent_memory/xhs_agent_worklog.json
+    exploration: agent_memory/xhs_exploration_memory.json
+    chunks_output: agent_memory/memory_chunks.json
+
+  retrieval:
+    # Supported retrieval methods:
+    # - bm25: lexical keyword retrieval. Fast and stable.
+    # - embedding: local hash-vector retrieval. No API needed, useful when wording differs.
+    # - bm25_embedding: weighted fusion of BM25 and local embedding scores.
+    # - bm25_embedding_rerank: fusion first, then optional small-model rerank.
+    default_method: bm25
+    fallback_method: bm25
+    allow_fallback: true
+    supported_methods:
+      - bm25
+      - embedding
+      - bm25_embedding
+      - bm25_embedding_rerank
+
+    default_top_k: 4
+    candidate_k: 30
+    min_score: 0.05
+    bm25_k1: 1.5
+    bm25_b: 0.75
+
+    embedding:
+      # Provider options:
+      # - local_hash: no API, no model download. Good for tests and fallback.
+      # - api: OpenAI-compatible cloud embedding API.
+      # - local_model: local sentence-transformers model, if installed.
+      enabled: true
+      provider: local_model
+      dimensions: 384
+      model_config_name: EMBEDDING_MODEL_CONFIG
+      batch_size: 32
+
+      local_model:
+        model_name: embedding/bge-small-zh-v1.5
+        cache_dir: embedding
+        device: cpu
+        trust_remote_code: false
+        normalize_embeddings: true
+        query_instruction: 为这个句子生成表示以用于检索相关文章：
+
+      index:
+        backend: faiss
+        auto_sync: true
+        remove_stale: true
+        stores:
+          manager_experience:
+            faiss_path: agent_memory/vector_store/xhs_agent_worklog.faiss
+            metadata_path: agent_memory/vector_store/xhs_agent_worklog_metadata.json
+          page_path:
+            faiss_path: agent_memory/vector_store/xhs_exploration_memory.faiss
+            metadata_path: agent_memory/vector_store/xhs_exploration_memory_metadata.json
+
+    hybrid:
+      bm25_weight: 0.62
+      embedding_weight: 0.38
+
+    rerank:
+      # When enabled, the retriever will ask a small model to reorder hybrid
+      # candidates. If disabled or the model call fails, it falls back to
+      # bm25_embedding and returns a warning.
+      enabled: false
+      model_config_name: MEMORY_RERANK_MODEL_CONFIG
+      candidate_k: 12
+      prompt_template: |
+        你是长期记忆检索重排器。请根据用户当前请求，对候选记忆进行相关性排序。
+        只返回 JSON 数组，每个元素包含 memory_id 和 reason，不要输出额外文字。
+
+        用户请求：
+        {query}
+
+        候选记忆：
+        {candidates_json}
+
+    manager_agent:
+      target_agent: manager_agent
+      retrieval_method: bm25_embedding
+      memory_types:
+        - manager_experience
+        - page_path
+
+    page_explorer_agent:
+      target_agent: page_explorer_agent
+      retrieval_method: bm25_embedding
+      memory_types:
+        - page_path
+
+  chunking:
+    max_result_chars: 900
+    max_summary_chars: 1800
+    max_step_chars: 320
+    max_steps: 12
+
+    target_agents:
+      manager_experience:
+        - manager_agent
+      page_path:
+        - page_explorer_agent
+        - manager_agent
+
+  tokenization:
+    domain_terms:
+      - 草稿
+      - 草稿箱
+      - 图文
+      - 笔记
+      - 发布
+      - 暂存
+      - 保存
+      - 评论
+      - 回复
+      - 删除
+      - 编辑
+      - 标题
+      - 正文
+      - 图片
+      - 视频
+      - 主页
+      - 创作中心
+      - 小红书
+      - 脚轮
+      - 生成图片
+      - 提示词
+      - 账号数据
+      - 浏览量
+      - 点赞
+      - 收藏
+      - 分享
+    stop_chars: 的了和是我你他她它在有把给为与及中上下吗呢吧啊

@@ -43,7 +43,11 @@ class WorkExperience:
 
 
 class XhsWorkflow:
-    """终端 Agent 的工作台：记录任务、步骤、结果和下一步建议。"""
+    """终端 Agent 的工作台。
+
+    `tasks` 只服务当前运行中的展示性工作台状态，不再持久化。
+    长期记忆只持久化 `memorized_requests` 和 `experiences`，并保持二者顺序一致。
+    """
 
     def __init__(self, worklog_path: Path = WORKLOG_PATH):
         self.worklog_path = worklog_path
@@ -70,15 +74,12 @@ class XhsWorkflow:
             except Exception:
                 return
             self.tasks = []
-            for item in data.get("tasks", []):
-                if item.get("status") != "completed":
-                    continue
-                steps = [WorkStep(**step) for step in item.get("steps", [])]
-                item["steps"] = steps
-                self.tasks.append(WorkItem(**item))
             self.experiences = []
             for item in data.get("experiences", []):
-                self.experiences.append(WorkExperience(**item))
+                try:
+                    self.experiences.append(WorkExperience(**item))
+                except TypeError:
+                    continue
             stored_requests = [
                 str(request).strip()
                 for request in data.get("memorized_requests", [])
@@ -87,16 +88,34 @@ class XhsWorkflow:
             if not stored_requests:
                 stored_requests = [item.user_request for item in self.experiences if item.user_request]
             self.memorized_requests = list(dict.fromkeys(stored_requests))
-            self.current_task = self.tasks[-1] if self.tasks else None
+            self._align_memory_order()
+            self.current_task = None
+
+    def _align_memory_order(self):
+        indexed: dict[str, WorkExperience] = {}
+        for item in self.experiences:
+            request = str(item.user_request or "").strip()
+            if not request or request in indexed:
+                continue
+            item.user_request = request
+            indexed[request] = item
+
+        ordered: list[WorkExperience] = []
+        for request in self.memorized_requests:
+            if request in indexed:
+                ordered.append(indexed.pop(request))
+        ordered.extend(indexed.values())
+
+        self.experiences = ordered[-120:]
+        self.memorized_requests = [item.user_request for item in self.experiences]
 
     def save(self):
         with self._lock:
+            self._align_memory_order()
             self.worklog_path.parent.mkdir(parents=True, exist_ok=True)
-            completed_tasks = [task for task in self.tasks if task.status == "completed"]
             data = {
-                "tasks": [asdict(task) for task in completed_tasks[-50:]],
-                "memorized_requests": self.memorized_requests[-300:],
-                "experiences": [asdict(item) for item in self.experiences[-120:]],
+                "memorized_requests": self.memorized_requests,
+                "experiences": [asdict(item) for item in self.experiences],
             }
             self.worklog_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -257,8 +276,7 @@ class XhsWorkflow:
                 print(f"长期记忆审核：写入前发现重复请求，已跳过。重复请求：{duplicate}")
                 return
             self.experiences.append(experience)
-            self.memorized_requests.append(experience.user_request)
-            self.memorized_requests = list(dict.fromkeys(self.memorized_requests))[-300:]
+            self._align_memory_order()
             print(f"长期记忆审核：已写入新经验：{experience.user_request}")
             self.save()
 

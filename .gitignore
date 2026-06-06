@@ -6,3 +6,6 @@
 /auth_xhs_web.json
 /.browser_profile/
 /agent_memory/
+/data/
+/embedding/*
+!/embedding/README.md

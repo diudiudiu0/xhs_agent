@@ -9,6 +9,15 @@
 
 ## Unit Tests
 
+- `unit/test_agent_worklog.py`
+  Verifies long-term worklog memory is persisted as `memorized_requests + experiences`, with matching order and no persisted transient `tasks`.
+
+- `unit/test_memory_retriever.py`
+  Verifies worklog and page-exploration memories can be converted into unified chunks and retrieved with BM25, embedding, hybrid, and rerank-fallback strategies.
+
+- `unit/test_memory_skill.py`
+  Verifies long-term memory retrieval is exposed through the unified skill registry with selectable retrieval methods.
+
 - `unit/test_web_note_metrics_collector.py`
   Verifies JSON deduplication, publish-date normalization, and comment cleanup for collected note metrics.
 
@@ -41,20 +50,17 @@
 - `integration/browser_session_control.py`
   Unified manual browser entry for Xiaohongshu login and inspection.
 
-  Common commands:
-
-  ```powershell
-  D:\ANACONDA\envs\xhs_agent\python.exe test\integration\browser_session_control.py --target both --mode login
-  D:\ANACONDA\envs\xhs_agent\python.exe test\integration\browser_session_control.py --target creator --mode login
-  D:\ANACONDA\envs\xhs_agent\python.exe test\integration\browser_session_control.py --target web --mode login
-  D:\ANACONDA\envs\xhs_agent\python.exe test\integration\browser_session_control.py --target creator --mode keep-open
-  ```
-
 - `integration/xhs_terminal_agent.py`
   Terminal interaction entry for `ManagerAgent`.
 
+- `integration/test_interactive_memory_retrieval.py`
+  Interactive terminal script for testing long-term memory retrieval. It asks for retrieval method, query, target agent, filters, and can sync or rebuild the embedding index.
+
+- `integration/build_memory_embedding_index.py`
+  Builds or rebuilds local FAISS vector stores under `agent_memory/vector_store/` from real long-term memory chunks using the embedding provider configured in `cfg/memory.yaml`.
+
 - `integration/test_collect_latest_published_note_metrics.py`
-  Opens the Xiaohongshu main site, enters `我 -> 笔记`, opens the top note, collects note metrics, and writes deduplicated data to `data/xhs_published_note_metrics.json`.
+  Opens the Xiaohongshu main site, enters the profile note list, opens the top note, collects note metrics, and writes deduplicated data to `data/xhs_published_note_metrics.json`.
 
 - `integration/test_create_draft.py`
   Opens the creator center and runs the note draft workflow.
@@ -70,10 +76,11 @@
 
 ## Recommended Unit Check
 
-Run these after code changes that do not require browser/API access:
-
 ```powershell
 D:\ANACONDA\envs\xhs_agent\python.exe -m compileall -q src skills test
+D:\ANACONDA\envs\xhs_agent\python.exe test\unit\test_agent_worklog.py
+D:\ANACONDA\envs\xhs_agent\python.exe test\unit\test_memory_retriever.py
+D:\ANACONDA\envs\xhs_agent\python.exe test\unit\test_memory_skill.py
 D:\ANACONDA\envs\xhs_agent\python.exe test\unit\test_web_note_metrics_collector.py
 D:\ANACONDA\envs\xhs_agent\python.exe test\unit\test_account_management_service.py
 D:\ANACONDA\envs\xhs_agent\python.exe test\unit\test_account_management_skills.py

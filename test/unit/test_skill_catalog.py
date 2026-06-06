@@ -28,6 +28,7 @@ def main():
         "get_page_state",
         "explore_page_task",
         "handle_dialogs",
+        "search_long_term_memory",
         "show_session_memory",
         "close_session",
     }
@@ -84,6 +85,7 @@ def main():
         "account_management_service",
         "collect_note_metrics",
         "review_risky_action",
+        "search_long_term_memory",
     ):
         if text not in catalog:
             raise AssertionError(f"rendered catalog missing: {text}")

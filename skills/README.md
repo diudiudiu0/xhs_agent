@@ -33,5 +33,8 @@
 - `get_page_state`
 - `explore_page_task`
 - `handle_dialogs`
+- `search_long_term_memory`
 - `show_session_memory`
 - `close_session`
+
+`search_long_term_memory` 支持通过 `retrieval_method` 选择 `bm25`、`embedding`、`bm25_embedding`、`bm25_embedding_rerank`。实际可用状态、回退信息和命中结果会一起返回给调用方。也可以通过 `save_embedding_index` 或 `rebuild_embedding_index` 生成 `agent_memory/vector_store/` 下的本地 FAISS 向量库。

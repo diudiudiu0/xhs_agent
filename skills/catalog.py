@@ -5,6 +5,7 @@ from skills.base import SkillContext, SkillRegistry, SkillResult
 from skills.content_skills import CONTENT_SKILLS
 from skills.draft_skills import DRAFT_SKILLS
 from skills.image_skills import IMAGE_SKILLS
+from skills.memory_skills import MEMORY_SKILLS
 from skills.page_skills import PAGE_SKILLS
 from skills.session_skills import SESSION_SKILLS
 
@@ -17,6 +18,7 @@ def build_default_registry() -> SkillRegistry:
         *CONTENT_SKILLS,
         *DRAFT_SKILLS,
         *PAGE_SKILLS,
+        *MEMORY_SKILLS,
         *SESSION_SKILLS,
     ]:
         registry.register(skill)
