@@ -68,6 +68,38 @@ MEMORY_REVIEW_MODEL_CONFIG = {
 }
 
 
+# Small-model config for long-term memory rerank.
+# Responsibility:
+# - Reorders retrieved memory candidates when cfg/memory.yaml enables
+#   retrieval.rerank.enabled.
+# - It does not create or mutate memory; it only ranks candidates.
+MEMORY_RERANK_MODEL_CONFIG = {
+    "provider": "deepseek",
+    "api_key": MODEL_CONFIG["api_key"],
+    "base_url": MODEL_CONFIG["base_url"],
+    "model": "deepseek-v4-flash",
+    "timeout": 30,
+    "max_tokens": 1000,
+    "temperature": 0.1,
+}
+
+
+# Embedding model config for long-term memory vector search.
+# Used only when cfg/memory.yaml sets:
+# memory.retrieval.embedding.provider: api
+# The API should be OpenAI-compatible and support client.embeddings.create().
+# DeepSeek official chat models are NOT used here unless DeepSeek later provides
+# an embeddings-compatible endpoint. Keep DeepSeek for MEMORY_RERANK_MODEL_CONFIG.
+EMBEDDING_MODEL_CONFIG = {
+    "provider": "openai_compatible",
+    "api_key": "",
+    "env_key": "EMBEDDING_API_KEY",
+    "base_url": "",
+    "model": "",
+    "timeout": 30,
+}
+
+
 # Main manager brain config.
 # Responsibility:
 # - Understand the user's account-management goal.
