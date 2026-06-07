@@ -191,6 +191,8 @@ python test/integration/test_image_prompt_generation.py
 - `src/note_draft_workflow.py`：创建小红书草稿的主流程。
 - `src/xhs_skill_runtime.py`：终端 Agent 的技能封装层，统一调用提示词生成、提示词修改、图片生成、页面状态和创建草稿。
 - `test/integration/xhs_terminal_agent.py`：小红书个人账号终端交互 Agent 入口。
+- `test/integration/xhs_web_agent.py`：小红书个人账号 Web 控制台入口。
+- `web/`：Web 控制台前端页面，包含聊天、任务状态、记忆检索和向量库构建面板。
 - `src/image_generation_service.py`：图片生成/编辑方法实现，不负责具体测试入口。
 - `src/image_prompt_agent.py`：根据现有图片生成图片生成提示词，并调用图片生成流程出图。
 - `src/memory_embedding.py`：长期记忆 embedding 编码和 `agent_memory/vector_store/*.faiss` 本地 FAISS 向量库。
@@ -262,6 +264,36 @@ python test/integration/browser_session_control.py --target both --mode login
 ```
 
 然后再次运行测试。
+
+### 启动 Web 控制台
+
+首次使用需要安装：
+
+```bash
+python -m pip install -U fastapi "uvicorn[standard]"
+```
+
+运行：
+
+```bash
+python test/integration/xhs_web_agent.py
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:8765
+```
+
+当前 Web 控制台支持：
+
+- 与 `ManagerAgent` 聊天。
+- WebSocket 实时展示当前任务状态、执行步骤和事件流。
+- 后台任务队列，发送请求后页面不会卡死。
+- 当前任务软停止。
+- 处理高风险操作确认。
+- 测试长期记忆检索。
+- 增量构建或强制重建本地 FAISS 向量库。
 
 ### 草稿看起来没有保存
 

@@ -53,6 +53,9 @@
 - `integration/xhs_terminal_agent.py`
   Terminal interaction entry for `ManagerAgent`.
 
+- `integration/xhs_web_agent.py`
+  Realtime Web console entry for `ManagerAgent`; serves `web/`, WebSocket events, task queue APIs, memory search, and vector-store rebuild.
+
 - `integration/test_interactive_memory_retrieval.py`
   Interactive terminal script for testing long-term memory retrieval. It asks for retrieval method, query, target agent, filters, and can sync or rebuild the embedding index.
 

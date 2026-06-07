@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>XHS Agent 控制台</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="chat-panel">
+        <header class="topbar">
+          <div>
+            <h1>XHS Agent</h1>
+            <p>小红书账号管理实时工作台</p>
+          </div>
+          <div id="serviceStatus" class="status-pill">连接中</div>
+        </header>
+
+        <section id="messages" class="messages" aria-live="polite"></section>
+
+        <form id="chatForm" class="composer">
+          <textarea
+            id="messageInput"
+            rows="3"
+            placeholder="例如：查看我的草稿箱详情；根据喜仔的评论回复他；生成三张脚轮商品图并创建草稿"
+          ></textarea>
+          <div class="composer-actions">
+            <button id="sendButton" type="submit">发送</button>
+            <button id="stopButton" type="button">停止当前任务</button>
+            <button id="confirmButton" type="button" data-message="y">确认</button>
+            <button id="cancelButton" type="button" data-message="n">取消</button>
+            <span class="hint">Ctrl + Enter 发送</span>
+          </div>
+        </form>
+      </section>
+
+      <aside class="side-panel">
+        <section class="panel-block">
+          <div class="block-header">
+            <h2>任务状态</h2>
+            <button id="refreshState" type="button">刷新</button>
+          </div>
+          <dl class="state-grid">
+            <div>
+              <dt>状态</dt>
+              <dd id="agentStatus">-</dd>
+            </div>
+            <div>
+              <dt>当前目标</dt>
+              <dd id="currentGoal">-</dd>
+            </div>
+            <div>
+              <dt>当前任务</dt>
+              <dd id="currentTask">-</dd>
+            </div>
+            <div>
+              <dt>队列</dt>
+              <dd id="queueSize">0</dd>
+            </div>
+            <div>
+              <dt>最终回复</dt>
+              <dd id="finalAnswer">-</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="panel-block">
+          <h2>执行步骤</h2>
+          <ol id="steps" class="steps"></ol>
+        </section>
+
+        <section class="panel-block">
+          <h2>实时事件</h2>
+          <div id="eventLog" class="event-log"></div>
+        </section>
+
+        <section class="panel-block">
+          <h2>长期记忆检索</h2>
+          <form id="memoryForm" class="tool-form">
+            <input id="memoryQuery" type="text" placeholder="输入检索内容" />
+            <div class="field-row">
+              <select id="retrievalMethod">
+                <option value="bm25_embedding">BM25 + Embedding</option>
+                <option value="embedding">Embedding</option>
+                <option value="bm25">BM25</option>
+                <option value="bm25_embedding_rerank">Hybrid + Rerank</option>
+              </select>
+              <select id="targetAgent">
+                <option value="manager_agent">Manager</option>
+                <option value="page_explorer_agent">Page Explorer</option>
+                <option value="">不过滤</option>
+              </select>
+            </div>
+            <button type="submit">检索记忆</button>
+          </form>
+          <pre id="memoryResult" class="result-box"></pre>
+        </section>
+
+        <section class="panel-block">
+          <h2>向量库</h2>
+          <div class="field-row">
+            <button id="buildVector" type="button">增量构建</button>
+            <button id="rebuildVector" type="button">强制重建</button>
+          </div>
+          <pre id="vectorResult" class="result-box"></pre>
+        </section>
+      </aside>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
