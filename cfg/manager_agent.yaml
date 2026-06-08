@@ -7,6 +7,20 @@ manager_agent:
   max_steps_per_turn: 8
   max_recent_steps: 10
   max_memory_hints: 4
+  conditional_draft_creation_guard:
+    enabled: true
+    draft_keywords: ["草稿箱", "草稿", "文章", "帖子", "笔记"]
+    condition_keywords: ["如果没有", "如果为空", "没有文章", "没有帖子", "没有草稿", "为空", "为0", "0篇"]
+    create_keywords: ["创建", "新建", "生成帖子", "发帖", "创建一篇", "新建一篇"]
+    check_only_goal: "只查看草稿箱文章数量并返回结果，不要创建草稿，不要上传图片，不要编辑标题正文。"
+  generated_image_draft_guard:
+    enabled: true
+    reference_image_keywords: ["默认图片", "默认路径", "参考图", "参考图片", "本地图片", "图片"]
+    generation_keywords: ["生成图片", "生成帖子所需的图片", "生成发帖图片", "生成提示词", "提示词"]
+    draft_keywords: ["创建草稿", "新建草稿", "创建文章", "新建文章", "发帖", "帖子", "笔记"]
+  title_extract_patterns:
+    - "标题(?:为|是)[:：]?\\s*([^。；;\\n]+)"
+    - "题目(?:为|是)[:：]?\\s*([^。；;\\n]+)"
 
   system_prompt: |
     你是小红书个人账号运营的 Manager Agent。
@@ -20,10 +34,18 @@ manager_agent:
     你必须根据 skill catalog 中的 executor_type、executor_agent、autonomy_level、risk_policy、memory_reads、memory_writes 来选择能力。
 
   behavior_rules:
+    - 每一轮只规划一个原子 step，不要一次性把完整任务交给某个 skill。原子 step 必须能被一个 skill 独立完成，并且有明确 sub_goal、scope 和 success_criteria。
+    - 如果用户目标包含条件分支，例如“先查看，如果为空再创建”，当前 step 只能执行条件判断所需的最小只读任务；根据该 step 结果再规划后续创建或结束。
+    - 传给 explore_page_task 的 user_goal 必须是子任务目标，不是完整用户目标；例如只能传“只查看草稿箱数量并返回结果”，不要传“如果没有就创建草稿”。
+    - scope=read_only 时，禁止上传、填写、保存、删除、发布、发送回复等改变页面或账号状态的动作。
     - 如果用户目标可以由一个 skill 完成，直接 call_skill。
     - 如果用户目标需要多步完成，按顺序调用多个 skill，并在每个 skill 返回后重新规划。
     - 如果用户要求操作当前网页、已有草稿、已有帖子、评论、回复评论、查看主页或删除页面内容，优先使用 explore_page_task。
     - 如果用户要求从零创建一篇新草稿，才使用 create_note_draft。
+    - 如果用户目标是“先查看草稿箱，如果没有帖子/草稿再新建”，必须先调用 explore_page_task 获取草稿箱数量或详情；如果结果显示已有草稿，应 final_answer 说明无需新建；如果结果显示为空或用户仍要求新建，再继续生成图片、文案并调用 create_note_draft。
+    - 如果用户要求“根据默认图片/参考图片生成发帖图片并创建图文草稿”，优先调用 create_generated_note_draft。这个 workflow 会强制执行 generate_image_prompts -> generate_images -> plan_note_text -> create_note_draft，默认图片只作为参考图，不是最终上传素材。
+    - 只有当会话里已经有 generated_images，或用户显式传入 image_files 时，才直接调用 create_note_draft。不要在 generated_images 为空时直接调用 create_note_draft，除非用户明确要求直接上传默认原图并允许 allow_default_media=true。
+    - 小红书网页上的“文字配图/AI配图”不是本项目的图片生成能力。除非用户明确要求使用小红书网页自带配图，否则不要让 page_explorer 点击它；本项目生成图片必须使用 generate_image_prompts 和 generate_images，上传图片必须使用 create_note_draft 或 upload_local_files。
     - 如果用户只是要生成提示词、生成图片、写文案，不要打开网页。
     - 如果 skill 已经是高自治 agent，manager 只传目标和必要上下文，不要替它规划内部按钮点击。
     - 不要重复调用同一个失败 skill；失败后先根据错误和 state 判断是否换 skill、问用户或结束。
@@ -38,6 +60,11 @@ manager_agent:
     {
       "type": "call_skill",
       "skill_name": "技能名",
+      "sub_goal": "本 step 的单一子目标，不要写完整总目标",
+      "scope": "read_only | workflow | write_page | generate_assets | analyze | session",
+      "success_criteria": "该 step 完成的可检查条件",
+      "allowed_actions": [],
+      "forbidden_actions": [],
       "args": {},
       "requires_user_confirmation": false,
       "confirmation_message": "",

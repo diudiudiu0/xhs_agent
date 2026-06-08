@@ -18,7 +18,9 @@ from src.browser_tools import (
     fill_textbox_by_hint,
     fill_title_direct,
     go_back,
+    upload_media_directly,
 )
+from src.note_content_service import get_note_task_inputs
 from src.task_config_loader import _safe_load_yaml_file
 
 
@@ -214,6 +216,46 @@ def _text_arg(action: dict[str, Any], *names: str) -> str:
     return ""
 
 
+def _list_arg(action: dict[str, Any], *names: str) -> list[str]:
+    for name in names:
+        value = action.get(name)
+        if value is None or value == "":
+            continue
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return [str(value).strip()]
+    return []
+
+
+def _resolve_project_value(value: str) -> str:
+    if not value:
+        return ""
+    path = Path(value.replace("\\", "/")).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return str(path)
+
+
+def _resolve_project_values(values: list[str]) -> list[str]:
+    return [_resolve_project_value(value) for value in values if value]
+
+
+def _same_file_path(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    try:
+        return Path(left).resolve() == Path(right).resolve()
+    except OSError:
+        return str(Path(left)).replace("\\", "/").lower() == str(Path(right)).replace("\\", "/").lower()
+
+
+def _is_config_default_media(media_type: str, paths: list[str]) -> bool:
+    task_input = get_note_task_inputs(validate=False)
+    default_key = "default_video_file" if media_type == "video" else "default_image_file"
+    default_path = task_input.get(default_key) or ""
+    return any(_same_file_path(path, default_path) for path in paths)
+
+
 async def _execute_click(context: PageToolContext, action: dict[str, Any]) -> PageToolResult:
     index = int(action.get("element_index"))
     if index < 0 or index >= len(context.elements):
@@ -335,6 +377,54 @@ async def _execute_save_and_leave(context: PageToolContext, action: dict[str, An
     )
 
 
+async def _execute_upload_local_files(context: PageToolContext, action: dict[str, Any]) -> PageToolResult:
+    media_type = _text_arg(action, "media_type", "post_type", "type") or "image"
+    media_type = "video" if media_type.lower() in {"video", "视频"} else "image"
+    file_paths = _resolve_project_values(_list_arg(action, "file_paths", "files", "paths", "image_files", "video_files"))
+    folder = _resolve_project_value(_text_arg(action, "folder", "image_folder", "video_folder"))
+    default_file = _resolve_project_value(_text_arg(action, "default_file", "default_image_file", "default_video_file"))
+    count = action.get("count") or action.get("num_images") or action.get("num_videos") or 3
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        count = 3
+    count = max(1, min(count, 10))
+
+    allow_default_media = bool(action.get("allow_default_media", False))
+    requested_paths = list(file_paths)
+    if default_file:
+        requested_paths.append(default_file)
+    if requested_paths and _is_config_default_media(media_type, requested_paths) and not allow_default_media:
+        return PageToolResult(
+            False,
+            (
+                "拒绝上传配置默认参考素材：默认图片/视频只能作为生成提示词的参考，"
+                "不能作为最终帖子素材。请先调用 generate_images，或显式设置 allow_default_media=true。"
+            ),
+            element_text=f"{media_type} 默认参考素材保护",
+        )
+
+    success = await upload_media_directly(
+        context.page,
+        media_type,
+        image_folder=folder if media_type == "image" else None,
+        video_folder=folder if media_type == "video" else None,
+        image_files=file_paths if media_type == "image" else None,
+        video_files=file_paths if media_type == "video" else None,
+        default_image_file=default_file if media_type == "image" else None,
+        default_video_file=default_file if media_type == "video" else None,
+        num_images=count,
+        num_videos=count,
+    )
+    source = file_paths or ([folder] if folder else []) or ([default_file] if default_file else [])
+    element_text = f"{media_type} 本地上传：{source[:3]}"
+    return PageToolResult(
+        success,
+        "已提交本地文件给网页" if success else "本地文件上传失败，未找到可用文件或 file input",
+        element_text=element_text,
+    )
+
+
 async def _execute_switch_site(context: PageToolContext, action: dict[str, Any]) -> PageToolResult:
     target_site = _text_arg(action, "target_site", "site", "value")
     element_text = f"切换站点：{target_site}"
@@ -365,6 +455,7 @@ EXECUTORS: dict[str, Executor] = {
     "fill_title": _execute_fill_title,
     "fill_content": _execute_fill_content,
     "save_and_leave": _execute_save_and_leave,
+    "upload_local_files": _execute_upload_local_files,
     "switch_site": _execute_switch_site,
     "back": _execute_back,
     "wait": _execute_wait,

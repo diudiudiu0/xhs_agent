@@ -16,6 +16,7 @@ def main():
         "revise_image_prompts",
         "generate_images",
         "plan_note_text",
+        "create_generated_note_draft",
         "create_note_draft",
         "collect_note_metrics",
         "collect_latest_published_note_metrics",
@@ -54,6 +55,12 @@ def main():
     if draft.get("executor_type") != "workflow":
         raise AssertionError("create_note_draft should be workflow skill")
 
+    generated_draft = specs["create_generated_note_draft"]
+    if generated_draft.get("executor_type") != "workflow":
+        raise AssertionError("create_generated_note_draft should be workflow skill")
+    if "recommended" not in generated_draft.get("tags", []):
+        raise AssertionError("create_generated_note_draft should be recommended for generated-image drafts")
+
     collector = specs["collect_latest_published_note_metrics"]
     if collector.get("executor_agent") != "web_note_metrics_collector":
         raise AssertionError("collect_latest_published_note_metrics should use web_note_metrics_collector")
@@ -86,6 +93,7 @@ def main():
         "collect_note_metrics",
         "review_risky_action",
         "search_long_term_memory",
+        "create_generated_note_draft",
     ):
         if text not in catalog:
             raise AssertionError(f"rendered catalog missing: {text}")

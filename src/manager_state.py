@@ -14,6 +14,11 @@ class ManagerStep:
     index: int
     decision_type: str
     skill_name: str = ""
+    sub_goal: str = ""
+    scope: str = ""
+    success_criteria: str = ""
+    allowed_actions: list[str] = field(default_factory=list)
+    forbidden_actions: list[str] = field(default_factory=list)
     args: dict[str, Any] = field(default_factory=dict)
     reason: str = ""
     status: str = "planned"
@@ -50,6 +55,11 @@ class ManagerState:
         self,
         decision_type: str,
         skill_name: str = "",
+        sub_goal: str = "",
+        scope: str = "",
+        success_criteria: str = "",
+        allowed_actions: list[str] | None = None,
+        forbidden_actions: list[str] | None = None,
         args: dict[str, Any] | None = None,
         reason: str = "",
         status: str = "planned",
@@ -58,6 +68,11 @@ class ManagerState:
             index=len(self.steps) + 1,
             decision_type=decision_type,
             skill_name=skill_name,
+            sub_goal=sub_goal,
+            scope=scope,
+            success_criteria=success_criteria,
+            allowed_actions=allowed_actions or [],
+            forbidden_actions=forbidden_actions or [],
             args=args or {},
             reason=reason,
             status=status,

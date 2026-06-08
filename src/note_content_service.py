@@ -139,6 +139,55 @@ def _get_client():
     )
 
 
+def _extract_json_object_text(raw_text: str) -> str | None:
+    text = (raw_text or "").strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    return text[start : end + 1]
+
+
+def _repair_planner_action_json(raw_text: str) -> dict | None:
+    repair_template = str(get_prompt_config("legacy_note_planner", "json_repair_prompt_template", default="")).strip()
+    if not repair_template:
+        return None
+
+    prompt = render_prompt_template(
+        repair_template,
+        raw_text=raw_text[:3000],
+    )
+    try:
+        client = _get_client()
+        response = client.chat.completions.create(
+            model=MODEL_CONFIG.get("formatter_model") or MODEL_CONFIG.get("planner_model"),
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=min(MODEL_CONFIG.get("formatter_max_tokens", 1200), 1600),
+            temperature=MODEL_CONFIG.get("formatter_temperature", 0.1),
+        )
+        fixed_text = response.choices[0].message.content or ""
+        content = _extract_json_object_text(fixed_text)
+        if not content:
+            return None
+        parsed = json.loads(content)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception as exc:
+        print(f"页面规划 JSON 修复失败: {exc}")
+        return None
+
+
+def _parse_planner_action_json(raw_content: str) -> dict | None:
+    content = _extract_json_object_text(raw_content)
+    if not content:
+        return None
+    try:
+        parsed = json.loads(content)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError as exc:
+        print(f"JSON 解析失败: {exc}")
+        return _repair_planner_action_json(raw_content)
+
+
 def _style_values(content_config: dict) -> dict:
     style_config = content_config.get("style", {})
     return {
@@ -458,16 +507,17 @@ async def get_next_action(
             max_tokens=MODEL_CONFIG.get("planner_max_tokens", 800),
             temperature=MODEL_CONFIG.get("planner_temperature", 0.1)
         )
-        raw_content = response.choices[0].message.content
+        raw_content = response.choices[0].message.content or ""
         print(f"LLM 原始返回: {raw_content}")
-        start = raw_content.find('{')
-        end = raw_content.rfind('}') + 1
-        if start != -1 and end != -1:
-            content = raw_content[start:end]
-        else:
+        action = _parse_planner_action_json(raw_content)
+        if action is None:
             print("JSON 提取失败")
-            return {"action": "done"}
-        return json.loads(content)
+            return {
+                "action": "fail",
+                "reason": "页面规划模型没有返回合法 JSON，不能把失败当作任务完成。",
+                "raw_response": raw_content[:1000],
+            }
+        return action
     except Exception as e:
         print(f"LLM 调用失败: {e}")
         return {"action": "wait"}

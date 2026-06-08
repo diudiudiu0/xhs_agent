@@ -3,6 +3,7 @@
 from typing import Any
 
 from src.browser_state import summarize_browser_state
+from src.skill_scope_config import merge_action_constraints
 from skills.base import BaseSkill, SkillContext, SkillResult
 from skills.config import build_skill_spec, skill_message
 
@@ -54,11 +55,22 @@ class ExplorePageTaskSkill(BaseSkill):
             )
 
         skills = context.require_xhs_skills()
+        constraints = merge_action_constraints(
+            self.name,
+            args.get("scope"),
+            allowed_actions=args.get("allowed_actions") or [],
+            forbidden_actions=args.get("forbidden_actions") or [],
+        )
         result = await skills.explore_page_task(
             user_goal=str(user_goal),
             max_steps=int(args.get("max_steps") or 12),
             worklog_hints=args.get("worklog_hints") or [],
             target_site=args.get("target_site") or args.get("site"),
+            scope=str(constraints.get("scope") or args.get("scope") or ""),
+            success_criteria=str(args.get("success_criteria") or ""),
+            allowed_actions=constraints.get("allowed_actions") or [],
+            forbidden_actions=constraints.get("forbidden_actions") or [],
+            scope_note=str(constraints.get("prompt_note") or ""),
         )
         success = bool(result.get("success"))
         answer = result.get("answer", "")

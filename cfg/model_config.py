@@ -77,7 +77,7 @@ MEMORY_RERANK_MODEL_CONFIG = {
     "provider": "deepseek",
     "api_key": MODEL_CONFIG["api_key"],
     "base_url": MODEL_CONFIG["base_url"],
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-v4-pro",
     "timeout": 30,
     "max_tokens": 1000,
     "temperature": 0.1,
@@ -111,7 +111,7 @@ MANAGER_MODEL_CONFIG = {
     "provider": "deepseek",
     "api_key": MODEL_CONFIG["api_key"],
     "base_url": MODEL_CONFIG["base_url"],
-    "model": "deepseek-v4-pro",
+    "model": "deepseek-v4-flash",
     "timeout": 45,
     "max_tokens": 2200,
     "temperature": 0.2,
@@ -151,15 +151,22 @@ IMAGE_MODEL_CONFIG = {
 
 VISION_PROMPT_MODEL_CONFIG = {
     # 用于“看图写图片生成提示词”的多模态大模型。
-    # Moonshot/Kimi 示例：
+    # 当前启用：Moonshot/Kimi。
+    # 交互方式：
+    # - 使用 OpenAI-compatible Chat Completions。
+    # - messages[].content 采用 [{"type": "image_url"}, {"type": "text"}] 的多模态格式。
+    # - 本项目会把本机图片转成 data:image/...;base64,... 后传入 image_url.url。
+    #
+    # Kimi 示例：
     # - api_key 为空时读取环境变量 MOONSHOT_API_KEY。
     # - base_url: https://api.moonshot.cn/v1
     # - model: kimi-k2.6
     "provider": "moonshot",
     "api_key": "your_api_key",
     "env_key": "MOONSHOT_API_KEY",
+    "env_keys": ["MOONSHOT_API_KEY"],
     "base_url": "https://api.moonshot.cn/v1",
-    "model": "kimi-k2.6",
+    "model": "kimi-k2.5",
     # 批量看图写 prompt 会比普通文本慢，建议 180-300。
     "timeout": 180,
     "retry_attempts": 2,
@@ -167,4 +174,24 @@ VISION_PROMPT_MODEL_CONFIG = {
     "temperature": 1,
     "max_tokens": 3000,
     "system_prompt": "你是一名专业的电商视觉提示词工程师，擅长根据参考图写出可用于图片生成模型的高质量中文提示词。",
+}
+
+
+# Text planner for image-generation prompts.
+# Responsibility:
+# - Receives the reference-image description produced by VISION_PROMPT_MODEL_CONFIG.
+# - Produces a structured batch of image-generation prompts.
+# - This is text-only, but it can use the same Kimi account/model because your Moonshot quota is sufficient.
+IMAGE_PROMPT_PLANNER_MODEL_CONFIG = {
+    "provider": "moonshot",
+    "api_key": VISION_PROMPT_MODEL_CONFIG["api_key"],
+    "env_key": VISION_PROMPT_MODEL_CONFIG["env_key"],
+    "env_keys": VISION_PROMPT_MODEL_CONFIG["env_keys"],
+    "base_url": VISION_PROMPT_MODEL_CONFIG["base_url"],
+    "model": VISION_PROMPT_MODEL_CONFIG["model"],
+    "timeout": 180,
+    "retry_attempts": 2,
+    # Keep 1 for Kimi compatibility.
+    "temperature": 1,
+    "max_tokens": 3600,
 }

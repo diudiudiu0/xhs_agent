@@ -107,7 +107,10 @@ class XhsAgentRequestHandler(BaseHTTPRequestHandler):
     server_version = "XhsAgentWeb/0.1"
 
     def log_message(self, format: str, *args):  # noqa: A002
-        print(f"[web] {self.address_string()} - {format % args}")
+        # Keep routine HTTP polling quiet. Re-enable this line when debugging
+        # request routing:
+        # print(f"[web] {self.address_string()} - {format % args}")
+        return
 
     def do_GET(self):  # noqa: N802
         parsed = urlparse(self.path)

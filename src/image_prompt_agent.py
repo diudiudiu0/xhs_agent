@@ -7,6 +7,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+import httpx
 from openai import APIConnectionError, APITimeoutError, OpenAI
 
 
@@ -14,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from cfg.model_config import MODEL_CONFIG, VISION_PROMPT_MODEL_CONFIG
+from cfg.model_config import IMAGE_PROMPT_PLANNER_MODEL_CONFIG, MODEL_CONFIG, VISION_PROMPT_MODEL_CONFIG
 from src.image_generation_service import generate_or_edit_image_from_config
 from src.prompt_config import get_prompt_config
 from src.task_config_loader import get_active_image_prompt_pipeline_config, get_active_image_prompt_task_config
@@ -82,20 +83,44 @@ def _resolve_required_image_url(task_config: dict) -> str:
     return _encode_image_as_data_url(image_path)
 
 
-def _build_vision_client() -> OpenAI:
-    env_key = VISION_PROMPT_MODEL_CONFIG.get("env_key") or "MOONSHOT_API_KEY"
-    api_key = VISION_PROMPT_MODEL_CONFIG.get("api_key") or os.getenv(env_key)
+def _resolve_api_key_from_config(config: dict, default_env_key: str) -> tuple[str, list[str]]:
+    env_keys = config.get("env_keys")
+    if not isinstance(env_keys, list) or not env_keys:
+        env_keys = [config.get("env_key") or default_env_key]
+    api_key = config.get("api_key")
+    if not api_key:
+        api_key = next((os.getenv(str(env_key)) for env_key in env_keys if os.getenv(str(env_key))), "")
+    return api_key, [str(item) for item in env_keys]
+
+
+def _build_openai_client_from_config(config: dict, default_env_key: str, default_timeout: float) -> OpenAI:
+    api_key, env_keys = _resolve_api_key_from_config(config, default_env_key)
     if not api_key:
         raise ValueError(
-            "看图提示词模型 API Key 为空。请在 cfg/model_config.py 的 "
-            "VISION_PROMPT_MODEL_CONFIG['api_key'] 中填写，或设置环境变量 "
-            f"{env_key}。"
+            "模型 API Key 为空。请在 cfg/model_config.py 中填写对应 api_key，"
+            f"或设置环境变量 {'/'.join(env_keys)}。"
         )
+    timeout_value = float(config.get("timeout", default_timeout) or default_timeout)
+    timeout = httpx.Timeout(
+        timeout=timeout_value,
+        connect=float(config.get("connect_timeout", min(20.0, timeout_value)) or min(20.0, timeout_value)),
+        write=float(config.get("write_timeout", min(30.0, timeout_value)) or min(30.0, timeout_value)),
+        read=float(config.get("read_timeout", timeout_value) or timeout_value),
+        pool=float(config.get("pool_timeout", min(20.0, timeout_value)) or min(20.0, timeout_value)),
+    )
     return OpenAI(
         api_key=api_key,
-        base_url=VISION_PROMPT_MODEL_CONFIG.get("base_url"),
-        timeout=VISION_PROMPT_MODEL_CONFIG.get("timeout", 180),
+        base_url=config.get("base_url"),
+        timeout=timeout,
     )
+
+
+def _build_vision_client() -> OpenAI:
+    return _build_openai_client_from_config(VISION_PROMPT_MODEL_CONFIG, "MOONSHOT_API_KEY", 180)
+
+
+def _build_image_prompt_planner_client() -> OpenAI:
+    return _build_openai_client_from_config(IMAGE_PROMPT_PLANNER_MODEL_CONFIG, "MOONSHOT_API_KEY", 180)
 
 
 def _build_text_formatter_client() -> OpenAI:
@@ -283,6 +308,58 @@ def _format_prompts_with_text_model(
     return _parse_prompt_list(formatted_text, expected_count, heading_keywords)
 
 
+def _plan_prompts_from_image_description(
+    image_description: str,
+    expected_count: int,
+    prompt_task_config: dict,
+    generation_task_config: dict | None = None,
+) -> list[str]:
+    generation_task_config = generation_task_config or {}
+    planner_config = prompt_task_config.get("description_planner", {})
+    planner_template = (planner_config.get("prompt_template") or "").strip()
+    if not planner_template:
+        return _format_prompts_with_text_model(
+            image_description,
+            expected_count,
+            prompt_task_config,
+            generation_task_config,
+        )
+
+    size = generation_task_config.get("size") or prompt_task_config.get("size") or "未指定"
+    aspect_ratio = generation_task_config.get("aspect_ratio") or prompt_task_config.get("aspect_ratio") or "未指定"
+    planner_prompt = _format_template(
+        planner_template,
+        {
+            "image_description": image_description,
+            "expected_count": expected_count,
+            "instruction": (prompt_task_config.get("instruction") or "").strip(),
+            "user_goal": (prompt_task_config.get("user_goal") or "").strip(),
+            "batch_prompt_plan": (prompt_task_config.get("batch_prompt_plan") or "").strip(),
+            "size": size,
+            "aspect_ratio": aspect_ratio,
+        },
+    )
+
+    client = _build_image_prompt_planner_client()
+    planner_model = IMAGE_PROMPT_PLANNER_MODEL_CONFIG.get("model") or VISION_PROMPT_MODEL_CONFIG.get("model", "kimi-k2.6")
+    planner_temperature = IMAGE_PROMPT_PLANNER_MODEL_CONFIG.get("temperature")
+    planner_max_tokens = _as_positive_int(
+        planner_config.get("max_tokens") or IMAGE_PROMPT_PLANNER_MODEL_CONFIG.get("max_tokens"),
+        max(1800, expected_count * 900),
+    )
+    response = client.chat.completions.create(
+        model=planner_model,
+        messages=[{"role": "user", "content": planner_prompt}],
+        max_tokens=planner_max_tokens,
+        temperature=planner_temperature,
+    )
+    planned_text = (response.choices[0].message.content or "").strip()
+    if not planned_text:
+        raise ValueError("Kimi 批量图片提示词规划返回为空，无法继续生成图片。")
+    heading_keywords = prompt_task_config.get("parse_heading_keywords", [])
+    return _parse_prompt_list(planned_text, expected_count, heading_keywords)
+
+
 def _extract_text_from_value(value) -> str:
     if value is None:
         return ""
@@ -368,6 +445,35 @@ def _build_prompt_instruction(
     )
 
 
+def _build_vision_description_instruction(
+    task_config: dict,
+    generation_task_config: dict | None = None,
+    prompt_count: int = 1,
+) -> str:
+    generation_task_config = generation_task_config or {}
+    description_template = (task_config.get("vision_description_template") or "").strip()
+    if not description_template:
+        return _build_prompt_instruction(
+            task_config,
+            generation_task_config=generation_task_config,
+            prompt_count=1,
+        )
+
+    size = generation_task_config.get("size") or task_config.get("size") or ""
+    aspect_ratio = generation_task_config.get("aspect_ratio") or task_config.get("aspect_ratio") or ""
+    return _format_template(
+        description_template,
+        {
+            "instruction": (task_config.get("instruction") or "").strip(),
+            "user_goal": (task_config.get("user_goal") or "").strip(),
+            "prompt_count": prompt_count,
+            "size": size or "未指定",
+            "aspect_ratio": aspect_ratio or "未指定",
+            "batch_prompt_plan": (task_config.get("batch_prompt_plan") or "").strip(),
+        },
+    )
+
+
 def _build_retry_instruction(prompt_count: int, task_config: dict | None = None) -> str:
     retry_templates = (task_config or {}).get("retry_instruction_template", {})
     retry_template = retry_templates.get("single") if prompt_count == 1 else retry_templates.get("batch")
@@ -381,6 +487,7 @@ def _call_vision_prompt_model(
     prompt_instruction: str,
     prompt_count: int = 1,
     prompt_task_config: dict | None = None,
+    log_task_name: str = "图片提示词",
 ) -> str:
     model_name = VISION_PROMPT_MODEL_CONFIG.get("model", "kimi-k2.6")
     temperature = VISION_PROMPT_MODEL_CONFIG.get("temperature")
@@ -394,12 +501,18 @@ def _call_vision_prompt_model(
         "system_prompt",
         str(get_prompt_config("image_prompt_agent", "default_system_prompt", default="")),
     )
+    image_url_payload = {"url": image_url}
+    image_url_detail = str(VISION_PROMPT_MODEL_CONFIG.get("image_url_detail") or "").strip()
+    if image_url_detail:
+        image_url_payload["detail"] = image_url_detail
+
     user_content = [
-        {"type": "image_url", "image_url": {"url": image_url}},
+        {"type": "image_url", "image_url": image_url_payload},
         {"type": "text", "text": prompt_instruction},
     ]
 
     client = _build_vision_client()
+    extra_body = VISION_PROMPT_MODEL_CONFIG.get("extra_body")
     max_attempts = _as_positive_int(VISION_PROMPT_MODEL_CONFIG.get("retry_attempts"), 2)
     empty_reasons = []
     connection_errors = []
@@ -412,7 +525,7 @@ def _call_vision_prompt_model(
 
         try:
             print(
-                f"正在调用看图提示词模型：{model_name}，目标提示词数量={prompt_count}，"
+                f"正在调用看图提示词模型：{model_name}，任务={log_task_name}，目标数量={prompt_count}，"
                 f"第 {attempt + 1}/{max_attempts} 次尝试...",
                 flush=True,
             )
@@ -424,6 +537,7 @@ def _call_vision_prompt_model(
                 ],
                 temperature=temperature,
                 max_tokens=max_tokens,
+                extra_body=extra_body if isinstance(extra_body, dict) and extra_body else None,
             )
         except (APITimeoutError, APIConnectionError) as exc:
             error_name = type(exc).__name__
@@ -469,6 +583,32 @@ def generate_image_prompts_from_image(
     prompt_count = _as_positive_int((generation_task_config or {}).get("count"), 1)
     print(f"准备根据参考图生成 {prompt_count} 条图片提示词...", flush=True)
     image_url = _resolve_required_image_url(prompt_task_config)
+    mode = str(prompt_task_config.get("prompt_generation_mode") or "").strip().lower()
+    if not mode:
+        mode = "vision_describe_then_plan" if prompt_count > 1 else "legacy_vision_prompt"
+
+    if mode in {"vision_describe_then_plan", "describe_then_plan", "vision_summary_then_plan"}:
+        print("采用两段式流程：视觉模型描述参考图，文本模型规划批量图片提示词。", flush=True)
+        description_instruction = _build_vision_description_instruction(
+            prompt_task_config,
+            generation_task_config=generation_task_config,
+            prompt_count=prompt_count,
+        )
+        image_description = _call_vision_prompt_model(
+            image_url,
+            description_instruction,
+            prompt_count=1,
+            prompt_task_config=prompt_task_config,
+            log_task_name="参考图描述",
+        )
+        print("正在调用文本模型根据图片描述规划批量图片提示词...", flush=True)
+        return _plan_prompts_from_image_description(
+            image_description,
+            prompt_count,
+            prompt_task_config,
+            generation_task_config,
+        )
+
     prompt_instruction = _build_prompt_instruction(
         prompt_task_config,
         generation_task_config=generation_task_config,

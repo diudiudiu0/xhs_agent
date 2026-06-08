@@ -13,8 +13,9 @@ from src.manager_state import ManagerState
 
 
 def main():
-    if MANAGER_MODEL_CONFIG.get("model") != "deepseek-v4-pro":
-        raise AssertionError("manager brain model should be deepseek-v4-pro")
+    model = str(MANAGER_MODEL_CONFIG.get("model") or "")
+    if not model.startswith("deepseek-v4"):
+        raise AssertionError("manager brain model should use a configured deepseek-v4 model")
 
     config = load_manager_config()
     for key in ("system_prompt", "planner_prompt_template", "decision_schema", "behavior_rules"):

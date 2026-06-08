@@ -369,17 +369,49 @@ class XhsAgentSkills:
         max_steps: int = 12,
         worklog_hints: list[dict] | None = None,
         target_site: str | None = None,
+        scope: str = "",
+        success_criteria: str = "",
+        allowed_actions: list[str] | None = None,
+        forbidden_actions: list[str] | None = None,
+        scope_note: str = "",
     ) -> dict:
         """对没有固定 skill 的页面任务进行自主探索，并沉淀成功路径。"""
         site = await self._choose_site_for_goal(user_goal, target_site=target_site)
         page = await self.open_page(site)
         print(f"页面探索起点：{self._site_label(self.memory.active_site)} -> {page.url}")
+        runtime_hints = list(worklog_hints or [])
+        if self.memory.generated_images:
+            runtime_hints.append(
+                {
+                    "user_request": "当前会话已生成图片，可供页面上传工具使用",
+                    "reuse_level": "runtime_context",
+                    "summary": (
+                        "如果当前页面任务需要上传本机图片，可以调用 upload_local_files，"
+                        f"file_paths={self.memory.generated_images}。"
+                    ),
+                    "steps": [
+                        {
+                            "skill": "upload_local_files",
+                            "args": {
+                                "media_type": "image",
+                                "file_paths": self.memory.generated_images,
+                                "count": len(self.memory.generated_images),
+                            },
+                        }
+                    ],
+                }
+            )
         result = await self.explorer.explore(
             page,
             user_goal=user_goal,
             max_steps=max_steps,
-            worklog_hints=worklog_hints or [],
+            worklog_hints=runtime_hints,
             switch_page=self.switch_page,
+            scope=scope,
+            success_criteria=success_criteria,
+            allowed_actions=allowed_actions or [],
+            forbidden_actions=forbidden_actions or [],
+            scope_note=scope_note,
         )
         if result.get("success"):
             print("探索任务完成：")
@@ -399,11 +431,31 @@ class XhsAgentSkills:
         print(f"弹窗处理结果：{handled}")
         return handled
 
-    async def create_draft(self, image_files: list[str] | None = None) -> None:
+    async def create_draft(self, image_files: list[str] | None = None, allow_default_media: bool = False) -> dict:
         """使用当前图片和内容创建小红书图文草稿。"""
         task_input = get_note_task_inputs(validate=False)
-        page = await self.open_creator_page()
         image_files = image_files or self.memory.generated_images
+        if task_input.get("post_type") == "image" and not image_files and not allow_default_media:
+            return {
+                "success": False,
+                "status": "missing_generated_images",
+                "reason": (
+                    "创建图文草稿前没有可上传的生成图片。"
+                    "请先调用 generate_image_prompts 和 generate_images，"
+                    "或显式传入 image_files；如确实要上传默认原图，需要传 allow_default_media=True。"
+                ),
+                "title": self.memory.last_note_title or task_input["title"],
+                "post_type": "image",
+                "media_uploaded": False,
+                "filled_title": False,
+                "filled_content": False,
+                "draft_saved": False,
+                "steps": 0,
+                "url": "",
+                "history": [],
+            }
+
+        page = await self.open_creator_page()
 
         title = self.memory.last_note_title or task_input["title"]
         content = self.memory.last_note_content or task_input["seed_content"]
@@ -412,7 +464,7 @@ class XhsAgentSkills:
             title = note_text["title"]
             content = note_text["content"]
 
-        await agent_create_note_draft(
+        result = await agent_create_note_draft(
             page,
             post_type="image",
             title=title,
@@ -422,11 +474,12 @@ class XhsAgentSkills:
             num_images=len(image_files) if image_files else task_input["num_images"],
             expand_content=False if self.memory.generated_prompts else task_input["expand_content"],
             content_topic=task_input["topic"],
-            default_image_file=image_files[0] if image_files else task_input["default_image_file"],
+            default_image_file=image_files[0] if image_files else task_input["default_image_file"] if allow_default_media else None,
             video_folder=task_input["video_folder"],
             default_video_file=task_input["default_video_file"],
             num_videos=task_input["num_videos"],
         )
+        return result
 
     async def close(self):
         for session in list(self.memory.page_sessions.values()):

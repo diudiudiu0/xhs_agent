@@ -40,6 +40,12 @@ CONTENTEDITABLE_EMPTY_KEYWORDS = _publisher_keywords("contenteditable_empty")
 SEARCH_EXCLUDE_KEYWORDS = _publisher_keywords("search_excludes")
 PUBLISH_ENTRY_EXCLUDE_KEYWORDS = _publisher_keywords("publish_entry_excludes")
 IMAGE_UPLOAD_EXCLUDE_KEYWORDS = _publisher_keywords("image_upload_excludes")
+DEBUG_BROWSER_STATE_LOGS = False
+
+
+def _debug_print(message: str):
+    if DEBUG_BROWSER_STATE_LOGS:
+        print(message)
 
 
 def _image_folder_ready(image_folder: str | None) -> bool:
@@ -108,8 +114,45 @@ def _recent_repeat_count(history, action, elements):
     return count
 
 
+def _build_draft_result(
+    page,
+    *,
+    success: bool,
+    status: str,
+    reason: str,
+    title: str,
+    content: str,
+    post_type: str,
+    media_uploaded: bool,
+    filled_title: bool,
+    filled_content: bool,
+    draft_saved: bool,
+    steps: int,
+    history: list,
+):
+    try:
+        url = "" if page.is_closed() else page.url
+    except Exception:
+        url = ""
+    return {
+        "success": success,
+        "status": status,
+        "reason": reason,
+        "title": title,
+        "content_length": len(content or ""),
+        "post_type": post_type,
+        "media_uploaded": media_uploaded,
+        "filled_title": filled_title,
+        "filled_content": filled_content,
+        "draft_saved": draft_saved,
+        "steps": steps,
+        "url": url,
+        "history": history,
+    }
+
+
 def _choose_builtin_action(elements, title, content, media_uploaded, filled_title, filled_content, draft_saved, state):
-    """根据明确页面状态做保守兜底；不再让规则盲目重复点击同一入口。"""
+    """根据明确页面状态选择固定草稿 workflow 的下一步动作。"""
     post_type = state.get("post_type", "image")
     title_idx = _find_element(
         elements,
@@ -124,7 +167,9 @@ def _choose_builtin_action(elements, title, content, media_uploaded, filled_titl
         excludes=TITLE_FIELD_KEYWORDS + SEARCH_EXCLUDE_KEYWORDS,
     )
 
-    image_entry_idx = _find_element(elements, IMAGE_ENTRY_KEYWORDS, excludes=VIDEO_KEYWORDS)
+    # Some XHS tab containers contain both "上传视频" and "上传图文".
+    # For the fixed draft workflow, seeing "上传图文" is enough to enter the image flow.
+    image_entry_idx = _find_element(elements, IMAGE_ENTRY_KEYWORDS)
     video_entry_idx = _find_element(elements, VIDEO_ENTRY_KEYWORDS)
     upload_idx = _find_element(
         elements,
@@ -235,6 +280,8 @@ async def agent_create_note_draft(
     filled_title = False
     filled_content = False
     draft_saved = False
+    failure_reason = ""
+    steps_taken = 0
     history = []
     state = {
         "phase": "creator_home",
@@ -255,16 +302,19 @@ async def agent_create_note_draft(
 
     max_steps = 25
     for step in range(max_steps):
+        steps_taken = step + 1
         print(f"--- Agent 步骤 {step+1} ---")
         if page.is_closed():
             print("页面已关闭，Agent 停止执行")
+            failure_reason = "页面已关闭，草稿创建未完成。"
             break
 
         browser_state = await observe_browser_state(page)
         state["browser_state"] = browser_state
-        print(f"浏览器状态快照：{summarize_browser_state(browser_state)}")
+        _debug_print(f"浏览器状态快照：{summarize_browser_state(browser_state)}")
         if browser_state.get("page_closed"):
             print("浏览器状态：页面已关闭，Agent 停止执行")
+            failure_reason = "浏览器页面已关闭，草稿创建未完成。"
             break
         if not browser_state.get("page_responsive"):
             print("浏览器状态：页面暂未响应，等待后重新观察")
@@ -302,7 +352,7 @@ async def agent_create_note_draft(
             state,
         )
         if action:
-            print(f"状态兜底动作: {action}")
+            print(f"草稿工作流状态动作: {action}")
         else:
             action = await get_next_action(page, task, history, elements_cache, state)
 
@@ -340,10 +390,26 @@ async def agent_create_note_draft(
             "back",
         }
         if should_wait_for_feedback:
-            print(f"动作前状态：{summarize_browser_state(before_action_state)}")
+            _debug_print(f"动作前状态：{summarize_browser_state(before_action_state)}")
+
+        if action["action"] == "fail":
+            failure_reason = action.get("reason") or "页面规划模型返回失败动作。"
+            raw_response = action.get("raw_response")
+            print(f"Agent 规划失败：{failure_reason}")
+            if raw_response:
+                print(f"规划失败原始返回预览：{raw_response[:500]}")
+            break
 
         if action["action"] == "done":
-            print("Agent 任务完成")
+            if draft_saved:
+                print("Agent 任务完成")
+            else:
+                failure_reason = (
+                    "Agent 提前返回 done，但草稿尚未确认暂存。"
+                    f" media_uploaded={media_uploaded}, filled_title={filled_title}, "
+                    f"filled_content={filled_content}, draft_saved={draft_saved}"
+                )
+                print(failure_reason)
             break
 
         elif action["action"] == "fill_title":
@@ -379,6 +445,7 @@ async def agent_create_note_draft(
                 break
             if state["save_attempts"] >= 1:
                 print("暂存离开未确认，已保留当前页面并停止，避免重复执行同一失败动作")
+                failure_reason = "暂存离开未确认成功，草稿未能确认保存。"
                 break
             await wait_seconds(page, 2)
 
@@ -410,6 +477,7 @@ async def agent_create_note_draft(
                 print("素材上传工具步骤未成功，等待后重新观察页面")
                 if state["upload_attempts"] >= 3:
                     print("素材上传连续失败 3 次，停止本次任务，避免重复点击上传入口")
+                    failure_reason = "素材上传连续失败 3 次，草稿创建未完成。"
                     break
             await wait_seconds(page, 2)
 
@@ -495,8 +563,8 @@ async def agent_create_note_draft(
             }
         state["last_action_observation"] = action_observation
         state["browser_state"] = after_action_state
-        print(f"动作后状态：{summarize_browser_state(after_action_state)}")
-        print(f"页面反馈判断：{action_observation}")
+        _debug_print(f"动作后状态：{summarize_browser_state(after_action_state)}")
+        _debug_print(f"页面反馈判断：{action_observation}")
         if (
             action.get("action") == "click"
             and action_observation.get("status") == "no_visible_response"
@@ -519,5 +587,44 @@ async def agent_create_note_draft(
         })
         state["last_page_signature"] = state.get("current_page_signature", "")
 
-    print("Agent 草稿创建流程结束")
-    return page
+    if draft_saved:
+        result = _build_draft_result(
+            page,
+            success=True,
+            status="saved",
+            reason="草稿已确认暂存离开。",
+            title=title,
+            content=content,
+            post_type=post_type,
+            media_uploaded=media_uploaded,
+            filled_title=filled_title,
+            filled_content=filled_content,
+            draft_saved=draft_saved,
+            steps=steps_taken,
+            history=history,
+        )
+    else:
+        if not failure_reason:
+            failure_reason = (
+                "草稿创建流程结束但未确认保存。"
+                f" media_uploaded={media_uploaded}, filled_title={filled_title}, "
+                f"filled_content={filled_content}, draft_saved={draft_saved}"
+            )
+        result = _build_draft_result(
+            page,
+            success=False,
+            status="failed",
+            reason=failure_reason,
+            title=title,
+            content=content,
+            post_type=post_type,
+            media_uploaded=media_uploaded,
+            filled_title=filled_title,
+            filled_content=filled_content,
+            draft_saved=draft_saved,
+            steps=steps_taken,
+            history=history,
+        )
+
+    print(f"Agent 草稿创建流程结束：success={result['success']} status={result['status']} reason={result['reason']}")
+    return result

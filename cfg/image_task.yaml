@@ -47,6 +47,7 @@ image_prompt_tasks:
 
     input_image_source: local
     input_image: "doc/pic_exam.png"
+    prompt_generation_mode: vision_describe_then_plan
 
     # 这里描述视觉模型如何读取参考图并产生图片生成提示词。
     instruction: |
@@ -73,6 +74,26 @@ image_prompt_tasks:
       注意每张图都需要标明品牌！主体中如果含有刚性材料如果插杆和螺纹丝杆要注意生成的图片不能是其弯曲，背景需要与主体过渡协调。
 
     # 视觉模型提示词模板：负责看图和创意描述，不要求它必须稳定返回 JSON。
+    # prompt_generation_mode=vision_describe_then_plan 时，会优先使用下面的轻量描述模板：
+    # 第一个 Kimi 只负责看图描述；第二个 Kimi 根据图片描述做批量策划和严格 JSON 输出。
+    vision_description_template: |
+      请观察参考图，并只输出一段客观、完整的中文图片描述。
+
+      描述重点：
+      - 主体是什么，数量、品牌文字、颜色、材质、结构细节分别是什么。
+      - 哪些视觉特征必须保留，例如品牌、M6 金属螺纹丝杆、刹车拨片、黑色轮体、产品比例关系。
+      - 哪些细节容易被生成模型画错，例如螺纹丝杆不能弯曲、品牌文字不能丢失、主体不要变成多个不同产品。
+      - 参考图是否存在文字、警示语、排版、背景和拍摄角度。
+
+      用户目标：
+      {user_goal}
+
+      目标图片数量：{prompt_count}
+      目标尺寸/清晰度：{size}
+      目标画面比例：{aspect_ratio}
+
+      只输出图片事实描述，不要生成图片提示词，不要输出 JSON，不要 Markdown。
+
     vision_prompt_template: |
       {instruction}
 
@@ -107,7 +128,7 @@ image_prompt_tasks:
         只返回 {prompt_count} 条中文图片生成提示词，可以是 JSON 数组，也可以用“第1张、第2张”清晰分段。
 
     # 本地兜底解析关键词：
-    # 正常流程会优先使用 DeepSeek formatter，这里只用于 formatter 失败后的兜底拆分。
+    # 正常流程会优先使用 description_planner，这里只用于 legacy formatter 失败后的兜底拆分。
     parse_heading_keywords:
       - 封面图
       - 产品主体图
@@ -119,6 +140,34 @@ image_prompt_tasks:
       - 细节图
 
     # 格式化模型提示词模板：负责把视觉模型自由文本整理成严格 JSON。
+    # 两段式流程使用 description_planner；legacy 流程仍可使用 formatter。
+    description_planner:
+      prompt_template: |
+        你是小红书商品推荐图片组的图片生成提示词规划师。
+
+        任务：
+        根据“参考图事实描述”、用户目标和批量策划，生成 {expected_count} 条可直接交给图片生成模型的中文 prompt。
+
+        输出要求：
+        - 只输出严格 JSON 字符串数组，不要 Markdown，不要解释。
+        - 数组长度必须是 {expected_count}。
+        - 每条 prompt 都必须包含品牌 ZEABO 或参考图识别到的品牌信息。
+        - 每条 prompt 都必须包含目标画面比例 {aspect_ratio} 和清晰度/尺寸 {size}。
+        - 每条 prompt 都必须明确主体、构图、背景、光影、材质、文字/参数信息、需要避免的问题。
+        - 每条 prompt 分工必须不同，不能只是换同义词。
+        - 如果有 3 张图：第 1 张做封面，第 2 张做参数/结构介绍，第 3 张做真实使用场景。
+        - 第 2 张必须突出参数信息、结构标注或产品卖点信息，不要只做纯白背景产品照。
+        - 不要让金属螺纹丝杆弯曲，不要让品牌文字消失，不要生成一堆互相无关的轮子。
+
+        用户目标：
+        {user_goal}
+
+        批量策划：
+        {batch_prompt_plan}
+
+        参考图事实描述：
+        {image_description}
+
     formatter:
       prompt_template: |
         你是一个稳定的图片生成提示词结构化整理器。

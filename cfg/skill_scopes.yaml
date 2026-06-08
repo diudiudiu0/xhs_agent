@@ -1,0 +1,59 @@
+# Skill scope constraints used by ManagerAgent and specialist agents.
+#
+# A scope limits what a specialist skill may do for one atomic manager step.
+# The manager should pass a narrow sub_goal plus one of these scopes.
+
+skills:
+  explore_page_task:
+    read_only:
+      description: 只读取页面信息，不改变账号内容或页面表单。
+      allowed_actions:
+        - click
+        - click_semantic_target
+        - click_text_in_element
+        - click_near_text
+        - click_media_near_text
+        - switch_site
+        - back
+        - wait
+        - extract_answer
+        - done
+        - fail
+      forbidden_actions:
+        - upload_local_files
+        - fill
+        - fill_textbox
+        - fill_title
+        - fill_content
+        - save_and_leave
+      prompt_note: 当前 step 是只读检查。只能查看、切换、进入列表、提取答案，不要上传、填写、保存、删除、发布或发送回复。
+
+    write_page:
+      description: 允许编辑当前页面内容，但不允许发布、删除或发送公开互动。
+      allowed_actions: []
+      forbidden_actions:
+        - upload_local_files
+      prompt_note: 当前 step 允许编辑页面字段，但不负责上传本地素材；涉及公开发布、删除、发送回复时必须要求用户确认。
+
+    upload_generated_media:
+      description: 只允许上传已经生成或用户显式提供的本机素材。
+      allowed_actions:
+        - upload_local_files
+        - click
+        - click_semantic_target
+        - wait
+        - done
+        - fail
+      forbidden_actions:
+        - fill
+        - fill_textbox
+        - fill_title
+        - fill_content
+        - save_and_leave
+      prompt_note: 当前 step 只负责上传已有本机素材。不要填写标题正文，不要保存草稿，不要使用网页内置“文字配图”。
+
+    unrestricted:
+      description: 页面探索默认模式，由 page_explorer 自主选择工具，但仍需遵守高风险确认规则。
+      allowed_actions: []
+      forbidden_actions: []
+      prompt_note: 当前 step 没有额外 scope 限制，但仍必须遵守工具目录与高风险确认规则。

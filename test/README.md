@@ -74,6 +74,9 @@
 - `integration/test_image_prompt_generation.py`
   Uses the configured vision prompt task to generate image prompts and can chain into image generation.
 
+- `integration/test_kimi_vision_debug.py`
+  Minimal Kimi/Moonshot connectivity demo for vision prompt generation. It checks config, API key source, local image encoding, text ping, and image_url vision ping separately.
+
 - `integration/test_image_generation.py`
   Runs the configured image generation task and saves generated images locally.
 

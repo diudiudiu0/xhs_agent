@@ -155,20 +155,97 @@ skills:
       observation_title: 标题：{title}
       observation_content_length: 正文长度：{content_length}
 
+  create_generated_note_draft:
+    description: 根据参考图或默认图片先生成图片提示词，再生成本机发帖图片，再生成标题正文，最后创建小红书图文草稿并暂存离开。它是“根据参考图生成图片并发成草稿”的高层硬顺序 workflow。
+    executor_type: workflow
+    executor_agent: generated_note_workflow
+    autonomy_level: medium
+    manager_role: |
+      manager 在用户要求“根据默认图片/参考图片生成发帖图片并创建草稿”时优先调用这个 skill，而不是分别调用 create_note_draft。
+      该 workflow 内部强制顺序为 generate_image_prompts -> generate_images -> plan_note_text -> create_note_draft。
+      默认图片只作为生成提示词的参考图，不会作为最终帖子图片上传；最终上传素材必须来自 generate_images 的输出。
+      如果用户要求“先查看草稿箱，如果为空再新建”，manager 应先调用 explore_page_task 判断草稿箱是否为空；确认需要新建后再调用本 skill。
+    input_schema:
+      input_image: 可选。本机参考图路径或图片 URL；为空时使用 cfg/image_task.yaml 中的默认参考图。
+      user_goal: 可选。用户对图片风格、用途、产品和发帖目标的自然语言要求。
+      title: 可选。用户指定的帖子标题；为空时由文案模型生成。
+      count: 可选。生成图片数量；为空时使用 cfg/image_task.yaml。
+    output_schema:
+      prompts: 图片提示词列表。
+      image_paths: 生成后的本机图片路径列表。
+      note_text: 标题正文。
+      draft_result: 草稿创建结果。
+    preconditions:
+      - 参考图来自 input_image 或 cfg/image_task.yaml。
+      - 图文笔记不允许纯文字，因此该 workflow 必须先生成图片，再创建草稿。
+      - 不能把默认参考原图当作最终上传素材，除非用户明确要求使用 create_note_draft 并允许 allow_default_media。
+    memory_reads:
+      - image_task_config
+      - note_task_config
+      - session_memory
+    memory_writes:
+      - generated_prompts
+      - generated_images
+      - last_note_title
+      - last_note_content
+      - last_created_draft_title
+    risk_policy:
+      requires_confirmation_for:
+        - publish_public_note
+      note: 默认只暂存离开，不正式发布。
+    risk_level: medium
+    side_effects:
+      - llm_api_call
+      - image_api_call
+      - writes_local_files
+      - opens_browser_if_needed
+      - uploads_local_files
+      - writes_page_content
+      - saves_local_browser_draft
+    tags:
+      - draft
+      - image
+      - generation
+      - publish
+      - workflow
+      - recommended
+    examples:
+      - 根据默认图片生成帖子图片，标题为家居脚轮推荐，并创建草稿
+      - 用 doc/pic_exam.png 作为参考图生成三张图，再写文案发到草稿箱
+      - 草稿箱为空时，为我生成图片并创建一篇图文草稿
+    messages:
+      success: 已按“提示词生成 -> 图片生成 -> 文案生成 -> 创建草稿”的流程创建草稿：{title}
+      missing_prompts: 图片提示词生成失败，已停止创建草稿。
+      missing_images: 图片生成失败，已停止创建草稿。
+      draft_failed: 草稿创建失败。
+      draft_failed_with_reason: 草稿创建失败：{reason}
+      observation_prompt_count: 图片提示词数量：{count}
+      observation_image_count: 生成图片数量：{count}
+      observation_title: 标题：{title}
+      next_suggestion: 可以查看草稿箱确认保存结果，或继续规划下一篇内容。
+
   create_note_draft:
-    description: 从零创建一篇新的小红书图文或视频草稿：打开创作中心、上传素材、填写标题正文、暂存离开。适合“新建草稿”，不适合编辑当前页面已有草稿。
+    description: 从零创建一篇新的小红书图文或视频草稿的完整工作流：打开/复用创作中心、进入图文或视频发布入口、绕过系统文件选择器上传本机素材、等待上传完成、处理上传收尾弹窗、填写标题、填写正文、点击暂存离开并确认保存。适合“新建草稿/把生成图片发成草稿”，不适合编辑当前页面已有草稿。
     executor_type: workflow
     executor_agent: draft_workflow
     autonomy_level: medium
-    manager_role: manager 确认这是新建草稿任务后调用；该 workflow 使用已有素材和文案完成完整创建流程。
+    manager_role: |
+      manager 确认这是“已有最终本机素材后，从零新建草稿”任务后调用。该 workflow 自己负责页面上传、标题正文填写、上传弹窗收尾和暂存离开，不需要 manager 再调用 explore_page_task 去点击上传按钮。
+      如果用户要求先根据参考图生成图片，再创建草稿，应优先调用 create_generated_note_draft，而不是直接调用本 skill。
+      如果用户任务包含“先查看草稿箱，如果为空再新建”，manager 应先调用 explore_page_task 获取草稿箱结果；只有当结果明确表示草稿箱为空或需要新建时，才继续生成图片、生成文案并调用 create_note_draft。
+      如果用户已经要求根据默认图片生成发帖图片，标准顺序是：generate_image_prompts -> generate_images -> plan_note_text -> create_note_draft。
     input_schema:
       image_files: 可选。本机图片路径列表；为空时使用当前会话生成的图片。
+      allow_default_media: 可选，默认 false。只有用户明确要求直接上传默认原图时才设为 true；如果用户要求先生成提示词或生成图片，必须保持 false。
     output_schema:
       title: 草稿标题。
       image_count: 使用图片数量。
     preconditions:
       - 需要已有标题正文，或 cfg/task.yaml 中可以生成标题正文。
       - 图文笔记需要图片素材；视频笔记需要视频素材。
+      - 如果图片素材来自图片生成流程，应先成功调用 generate_image_prompts 和 generate_images，使 session_memory.generated_images 非空。
+      - 默认不会把 cfg/task.yaml 中的 default_image_file 原图当作发帖图片上传；没有 image_files 或 generated_images 时会失败，以防跳过图片生成流程。
+      - 如果标题为空，应先调用 plan_note_text 生成标题正文；如果标题已给定，也应调用 plan_note_text 结合图片提示词生成正文。
     memory_reads:
       - generated_images
       - last_note_title
@@ -194,6 +271,8 @@ skills:
     examples:
       - 用当前生成的图片和文案创建草稿
       - 把这些图片发到小红书草稿箱
+      - 先生成三张脚轮图片，再写标题正文并创建图文草稿
+      - 草稿箱为空时，新建标题为“家居脚轮推荐”的图文草稿
     messages:
       success: 新的小红书图文草稿创建流程已执行。
       observation_title: 标题：{title}

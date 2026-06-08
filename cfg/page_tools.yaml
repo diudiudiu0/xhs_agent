@@ -17,6 +17,7 @@ page_tools:
       - 目标元素已经明确出现在 interactive_elements 中，并且 element_index 指向正确对象。
     avoid_when:
       - 页面上有多个同名操作，无法仅靠 element_index 判断目标对象。
+      - 目标元素是“文字配图”“AI配图”“生成图片”等网页内置配图入口，但用户目标是上传本项目已生成的本机图片；此时应使用 upload_local_files。
     examples:
       - {"action": "click", "element_index": 3, "requires_user_confirmation": false, "reason": "打开目标入口"}
 
@@ -97,6 +98,38 @@ page_tools:
       - 当前页面没有 media_targets，也没有可见媒体封面线索。
     examples:
       - {"action": "click_media_near_text", "near_text": "目标对象唯一文本", "requires_user_confirmation": false, "reason": "打开关联预览"}
+
+  - name: upload_local_files
+    category: browser_action
+    description: 本机文件上传工具。绕过 Windows/系统文件选择弹窗，直接定位网页中的 input[type=file] 并提交本机图片或视频路径。文件选择器弹窗出现通常意味着页面点击了上传入口，但 Playwright 不应继续操作系统弹窗，而应关闭/绕过弹窗后调用本工具。
+    required_any:
+      - ["file_paths", "files", "paths", "folder", "default_file", "image_files", "video_files"]
+    optional:
+      - media_type
+      - post_type
+      - image_folder
+      - video_folder
+      - default_image_file
+      - default_video_file
+      - count
+      - num_images
+      - num_videos
+      - allow_default_media
+      - reason
+      - requires_user_confirmation
+      - confirmation_message
+    use_when:
+      - 用户目标明确需要把本机图片或视频上传到当前网页。
+      - 当前页面是发布/编辑页，已经出现上传入口、上传区域或 input[type=file]。
+      - 点击上传入口后出现系统文件选择器，说明需要用本工具绕过系统弹窗直接 set_input_files。
+      - 图片由 generate_images 生成后，file_paths 应使用 session 中的 generated_images 或用户提供的本机路径。
+      - 页面出现“上传图片，或写文字生成图片”“上传图片”“文字配图”等并列入口时，如果已有本机图片路径，应选择本工具上传本机图片，不要点击“文字配图”。
+    avoid_when:
+      - 还没有进入图文/视频发布区域，页面没有上传入口或 file input 线索。
+      - 只是需要生成图片，不需要把图片上传到网页。
+    examples:
+      - {"action": "upload_local_files", "media_type": "image", "file_paths": ["data/generated_images/1.png", "data/generated_images/2.png"], "requires_user_confirmation": false, "reason": "上传生成图片"}
+      - {"action": "upload_local_files", "media_type": "image", "folder": "doc", "default_file": "doc/pic_exam.png", "count": 1, "allow_default_media": true, "requires_user_confirmation": false, "reason": "用户明确要求直接上传默认原图"}
 
   - name: fill
     category: browser_action

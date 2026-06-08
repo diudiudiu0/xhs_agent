@@ -1,4 +1,5 @@
-﻿# test/unit/test_page_tool_registry.py
+# test/unit/test_page_tool_registry.py
+import asyncio
 import sys
 from pathlib import Path
 
@@ -9,11 +10,43 @@ if str(TEST_ROOT) not in sys.path:
 
 import _bootstrap  # noqa: F401
 
-from src.page_tool_registry import PAGE_TOOL_REGISTRY
-from src.page_explorer_agent import _is_valid_action
+from src.page_explorer_agent import XhsPageExplorer, _is_valid_action
+from src.page_tool_registry import PAGE_TOOL_REGISTRY, PageToolContext
 
 
-def main():
+async def test_default_reference_media_upload_is_blocked():
+    result = await PAGE_TOOL_REGISTRY.execute(
+        "upload_local_files",
+        PageToolContext(page=None, elements=[]),
+        {
+            "action": "upload_local_files",
+            "media_type": "image",
+            "file_paths": ["doc/pic_exam.png"],
+            "requires_user_confirmation": False,
+            "reason": "不应上传默认参考图",
+        },
+    )
+    if result.success:
+        raise AssertionError("upload_local_files should reject default reference image without allow_default_media")
+    if "默认参考素材" not in result.message:
+        raise AssertionError(result.message)
+
+
+def test_scope_blocks_forbidden_action():
+    explorer = XhsPageExplorer()
+    reason = explorer._action_block_reason(
+        "upload_local_files",
+        {
+            "scope": "read_only",
+            "allowed_actions": ["click", "extract_answer", "done"],
+            "forbidden_actions": ["upload_local_files"],
+        },
+    )
+    if "禁止" not in reason and "forbidden" not in reason:
+        raise AssertionError(reason)
+
+
+async def main():
     expected_tools = {
         "click",
         "click_semantic_target",
@@ -25,6 +58,7 @@ def main():
         "fill_title",
         "fill_content",
         "save_and_leave",
+        "upload_local_files",
         "switch_site",
         "back",
         "wait",
@@ -59,6 +93,13 @@ def main():
             "reason": "填写动态输入框",
         },
         {
+            "action": "upload_local_files",
+            "media_type": "image",
+            "file_paths": ["doc/pic_exam.png"],
+            "requires_user_confirmation": False,
+            "reason": "上传本地图片",
+        },
+        {
             "action": "done",
             "answer": "任务完成",
             "next_suggestion": "可以继续下一项",
@@ -71,11 +112,12 @@ def main():
         if not _is_valid_action(action):
             raise AssertionError(f"动作未通过 schema 校验：{action}")
 
+    await test_default_reference_media_upload_is_blocked()
+    test_scope_blocks_forbidden_action()
+
     print("页面工具注册表校验通过")
     print(PAGE_TOOL_REGISTRY.names())
 
 
 if __name__ == "__main__":
-    main()
-
-
+    asyncio.run(main())

@@ -89,9 +89,16 @@ def _normalize_decision(decision: dict | None) -> dict:
 
     if decision_type == "call_skill":
         args = decision.get("args") if isinstance(decision.get("args"), dict) else {}
+        allowed_actions = decision.get("allowed_actions")
+        forbidden_actions = decision.get("forbidden_actions")
         return {
             "type": "call_skill",
             "skill_name": str(decision.get("skill_name") or ""),
+            "sub_goal": str(decision.get("sub_goal") or ""),
+            "scope": str(decision.get("scope") or ""),
+            "success_criteria": str(decision.get("success_criteria") or ""),
+            "allowed_actions": allowed_actions if isinstance(allowed_actions, list) else [],
+            "forbidden_actions": forbidden_actions if isinstance(forbidden_actions, list) else [],
             "args": args,
             "requires_user_confirmation": bool(decision.get("requires_user_confirmation", False)),
             "confirmation_message": str(decision.get("confirmation_message") or ""),

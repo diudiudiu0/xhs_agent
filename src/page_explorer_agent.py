@@ -334,6 +334,17 @@ class XhsPageExplorer:
             )
         return lessons
 
+    def _action_block_reason(self, action_name: str, scope_context: dict[str, Any]) -> str:
+        if not action_name:
+            return ""
+        forbidden = set(str(item) for item in (scope_context.get("forbidden_actions") or []))
+        allowed = set(str(item) for item in (scope_context.get("allowed_actions") or []))
+        if action_name in forbidden:
+            return f"动作 {action_name} 被当前 step scope 禁止。"
+        if allowed and action_name not in allowed:
+            return f"动作 {action_name} 不在当前 step scope 的 allowed_actions 中。"
+        return ""
+
     def _classify_page_phase(self, snapshot: dict) -> str:
         url = snapshot.get("url", "")
         text = snapshot.get("visible_text", "")
@@ -565,11 +576,13 @@ class XhsPageExplorer:
         memory_hits: list[dict],
         trace_notes: list[dict],
         worklog_hints: list[dict],
+        scope_context: dict[str, Any] | None = None,
     ) -> str:
         template = str(get_prompt_config("page_explorer", "planner_prompt_template", default=""))
         return render_prompt_template(
             template,
             user_goal=user_goal,
+            scope_context_json=json.dumps(scope_context or {}, ensure_ascii=False, indent=2),
             tool_catalog=PAGE_TOOL_REGISTRY.render_prompt_catalog(),
             json_rules=PAGE_TOOL_REGISTRY.render_json_rules(),
             history_json=json.dumps([asdict(step) for step in history[-8:]], ensure_ascii=False, indent=2),
@@ -619,8 +632,9 @@ class XhsPageExplorer:
         memory_hits: list[dict],
         trace_notes: list[dict],
         worklog_hints: list[dict],
+        scope_context: dict[str, Any] | None = None,
     ) -> dict:
-        prompt = self._planner_prompt(user_goal, snapshot, history, memory_hits, trace_notes, worklog_hints)
+        prompt = self._planner_prompt(user_goal, snapshot, history, memory_hits, trace_notes, worklog_hints, scope_context)
         response = _client().chat.completions.create(
             model=MODEL_CONFIG.get("planner_model", MODEL_CONFIG.get("content_model")),
             messages=[{"role": "user", "content": prompt}],
@@ -772,12 +786,24 @@ class XhsPageExplorer:
         max_steps: int = 12,
         worklog_hints: list[dict] | None = None,
         switch_page=None,
+        scope: str = "",
+        success_criteria: str = "",
+        allowed_actions: list[str] | None = None,
+        forbidden_actions: list[str] | None = None,
+        scope_note: str = "",
     ) -> dict:
         self.trace.clear()
         history: list[ExplorationStep] = []
         memory_hits = self.memory.search(user_goal)
         trace_notes = []
         worklog_hints = worklog_hints or []
+        scope_context = {
+            "scope": scope or "unrestricted",
+            "success_criteria": success_criteria,
+            "allowed_actions": allowed_actions or [],
+            "forbidden_actions": forbidden_actions or [],
+            "scope_note": scope_note,
+        }
         last_action_key = ""
         repeated_no_response = 0
         self.page_context.reset(user_goal)
@@ -827,10 +853,41 @@ class XhsPageExplorer:
             snapshot = await self._page_snapshot(page, elements, state)
             self.page_context.apply_snapshot(snapshot)
             self._print_snapshot_debug(snapshot)
-            action = await self._plan_action(user_goal, snapshot, history, memory_hits, trace_notes, worklog_hints)
+            action = await self._plan_action(user_goal, snapshot, history, memory_hits, trace_notes, worklog_hints, scope_context)
             action_name = action.get("action")
             reason = action.get("reason", "")
             print(f"探索步骤 {step_index}: {action}")
+
+            block_reason = self._action_block_reason(str(action_name or ""), scope_context)
+            if block_reason:
+                observation = (
+                    f"{block_reason} 当前 step 目标是：{user_goal}；"
+                    f"scope={scope_context.get('scope')}；请改用允许动作完成该子任务。"
+                )
+                print(f"scope 阻止动作：{observation}")
+                trace_entry = {
+                    "created_at": datetime.now().isoformat(timespec="seconds"),
+                    "user_goal": user_goal,
+                    "step_index": step_index,
+                    "action": json.dumps(action, ensure_ascii=False),
+                    "element_text": "",
+                    "result": "blocked_by_scope",
+                    "observation": observation,
+                    "page_url": snapshot.get("url", ""),
+                }
+                self.trace.append(trace_entry)
+                trace_notes.append(trace_entry)
+                history.append(
+                    ExplorationStep(
+                        action=json.dumps(action, ensure_ascii=False),
+                        reason=reason,
+                        element_text="",
+                        result="blocked_by_scope",
+                        page_url=snapshot.get("url", ""),
+                        observation=observation,
+                    )
+                )
+                continue
 
             if action_name in {"done", "extract_answer"}:
                 answer = action.get("answer") or snapshot.get("visible_text", "")
