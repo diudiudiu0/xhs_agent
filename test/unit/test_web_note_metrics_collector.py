@@ -16,6 +16,7 @@ from src.web_note_metrics_collector import (
     _pick_published_at,
     load_account_data_config,
     save_note_metrics_if_new,
+    save_note_metrics_snapshot,
 )
 
 
@@ -33,6 +34,7 @@ def main():
 
     note = {
         "title": "test note title",
+        "content": "test note body",
         "published_at": "2026-06-05",
         "comment_count": 1,
         "comments": [{"author": "test_user", "content": "test comment"}],
@@ -65,6 +67,25 @@ def main():
     legacy_second = save_note_metrics_if_new(note, output_file=legacy_output_file)
     if not legacy_first["added"] or legacy_second["added"] or not legacy_second["duplicate"]:
         raise AssertionError((legacy_first, legacy_second))
+
+    snapshot_output_file = Path("data/test_xhs_snapshot_metrics.json")
+    if snapshot_output_file.exists():
+        snapshot_output_file.unlink()
+    second_note = dict(note)
+    second_note["title"] = "second test note"
+    first_snapshot = save_note_metrics_snapshot([note, second_note], output_file=snapshot_output_file)
+    if first_snapshot["note_count"] != 2 or not first_snapshot.get("overwritten"):
+        raise AssertionError(first_snapshot)
+    updated_note = dict(note)
+    updated_note["like_count"] = 99
+    updated_note["content"] = "updated note body"
+    second_snapshot = save_note_metrics_snapshot([updated_note], output_file=snapshot_output_file)
+    snapshot_data = json.loads(snapshot_output_file.read_text(encoding="utf-8"))
+    snapshot_notes = snapshot_data.get("notes", [])
+    if second_snapshot["note_count"] != 1 or len(snapshot_notes) != 1:
+        raise AssertionError((second_snapshot, snapshot_data))
+    if snapshot_notes[0].get("like_count") != 99 or snapshot_notes[0].get("content") != "updated note body":
+        raise AssertionError(snapshot_notes)
 
     polluted_comments = [
         {"raw": "user_a nice", "isReply": False},
@@ -101,6 +122,7 @@ def main():
 
     output_file.unlink()
     legacy_output_file.unlink()
+    snapshot_output_file.unlink()
     print("web note metrics storage check passed")
 
 

@@ -14,7 +14,7 @@
 
 MODEL_CONFIG = {
     "provider": "deepseek",
-    "api_key": "your_api_key",  # 为空时可自行改造为读取 DEEPSEEK_API_KEY。
+    "api_key": "sk-f7846192a6fc417fbba24b6ec32ba199",  # 为空时可自行改造为读取 DEEPSEEK_API_KEY。
     "base_url": "https://api.deepseek.com",
     "planner_model": "deepseek-v4-flash",
     "content_model": "deepseek-v4-flash",
@@ -129,7 +129,7 @@ IMAGE_MODEL_CONFIG = {
     # Doubao/火山方舟:
     # - api_key 为空时优先读取 ARK_API_KEY，其次读取 VOLCENGINE_API_KEY。
     # - base_url 通常为 https://ark.cn-beijing.volces.com/api/v3。
-    "api_key": "your_api_key",
+    "api_key": "ark-c3d1ae5a-c9db-49b9-8e24-2b4d99e3188a-228c2",
     "base_url": "https://ark.cn-beijing.volces.com/api/v3",
 
     # OpenAI 示例：gpt-image-1
@@ -162,7 +162,7 @@ VISION_PROMPT_MODEL_CONFIG = {
     # - base_url: https://api.moonshot.cn/v1
     # - model: kimi-k2.6
     "provider": "moonshot",
-    "api_key": "your_api_key",
+    "api_key": "sk-1kSHirTpXrU96r4mSllTz5DwZGE5szqNCGKaU2tt3KWKlC6Z",
     "env_key": "MOONSHOT_API_KEY",
     "env_keys": ["MOONSHOT_API_KEY"],
     "base_url": "https://api.moonshot.cn/v1",

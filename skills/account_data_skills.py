@@ -10,10 +10,10 @@ from src.account_management_service import (
     review_risky_action,
     schedule_content_calendar,
 )
-from src.web_note_metrics_collector import collect_latest_published_note_metrics
+from src.web_note_metrics_collector import collect_all_published_note_metrics, collect_latest_published_note_metrics
 
 
-async def _collect_metrics(skill_name: str, context: SkillContext, args: dict[str, Any]) -> SkillResult:
+async def _collect_latest_metrics(skill_name: str, context: SkillContext, args: dict[str, Any]) -> SkillResult:
     skills = context.require_xhs_skills()
     page = await skills.open_page("web")
     result = await collect_latest_published_note_metrics(
@@ -53,18 +53,66 @@ async def _collect_metrics(skill_name: str, context: SkillContext, args: dict[st
     )
 
 
+async def _collect_all_metrics(skill_name: str, context: SkillContext, args: dict[str, Any]) -> SkillResult:
+    skills = context.require_xhs_skills()
+    page = await skills.open_page("web")
+    result = await collect_all_published_note_metrics(
+        page,
+        output_file=args.get("output_file"),
+        max_notes=args.get("max_notes"),
+    )
+    notes = result.get("notes") or []
+    storage = result.get("storage") or {}
+    errors = result.get("errors") or []
+    message_key = "partial_success" if errors else "success"
+    message = skill_message(
+        skill_name,
+        message_key,
+        count=len(notes),
+        output_file=storage.get("output_file") or "",
+        error_count=len(errors),
+    )
+    observations = [
+        skill_message(skill_name, "observation_count", count=len(notes)),
+        *[
+            skill_message(
+                skill_name,
+                "observation_note",
+                index=index + 1,
+                title=note.get("title") or "",
+                published_at=note.get("published_at") or "",
+                like_count=note.get("like_count"),
+                collect_count=note.get("collect_count"),
+                comment_count=note.get("comment_count"),
+            )
+            for index, note in enumerate(notes[:5])
+        ],
+    ]
+    return SkillResult.ok(
+        skill_name,
+        message=message,
+        data=result,
+        artifacts=[storage.get("output_file")] if storage.get("output_file") else [],
+        observations=observations,
+        memory_updates={
+            "last_collected_published_notes": notes,
+            "last_collected_note_metrics_file": storage.get("output_file") or "",
+        },
+    )
+
+
 class CollectLatestPublishedNoteMetricsSkill(BaseSkill):
     spec = build_skill_spec("collect_latest_published_note_metrics")
 
     async def run(self, context: SkillContext, args: dict[str, Any] | None = None) -> SkillResult:
-        return await _collect_metrics(self.name, context, args or {})
+        return await _collect_latest_metrics(self.name, context, args or {})
 
 
 class CollectNoteMetricsSkill(BaseSkill):
     spec = build_skill_spec("collect_note_metrics")
 
     async def run(self, context: SkillContext, args: dict[str, Any] | None = None) -> SkillResult:
-        return await _collect_metrics(self.name, context, args or {})
+        return await _collect_all_metrics(self.name, context, args or {})
 
 
 class AnalyzeAccountPerformanceSkill(BaseSkill):

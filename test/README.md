@@ -63,7 +63,10 @@
   Builds or rebuilds local FAISS vector stores under `agent_memory/vector_store/` from real long-term memory chunks using the embedding provider configured in `cfg/memory.yaml`.
 
 - `integration/test_collect_latest_published_note_metrics.py`
-  Opens the Xiaohongshu main site, enters the profile note list, opens the top note, collects note metrics, and writes deduplicated data to `data/xhs_published_note_metrics.json`.
+  Opens the Xiaohongshu main site, enters the profile note list, opens one note by index, collects note metrics/content, and writes deduplicated data to `data/xhs_published_note_metrics.json`.
+
+- `integration/test_collect_all_published_note_metrics.py`
+  Opens the Xiaohongshu main site, loops through visible published notes, collects metrics/comments/content, and overwrites `data/xhs_published_note_metrics.json` as a fresh account snapshot.
 
 - `integration/test_create_draft.py`
   Opens the creator center and runs the note draft workflow.

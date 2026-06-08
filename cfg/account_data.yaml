@@ -6,6 +6,7 @@
 published_note_metrics:
   output_file: data/xhs_published_note_metrics.json
   default_note_index: 0
+  max_notes_per_refresh: 30
   navigation:
     profile_entry_texts: ["我"]
     note_tab_texts: ["笔记"]
@@ -14,6 +15,8 @@ published_note_metrics:
     note_cards_ready_timeout_ms: 12000
     detail_ready_timeout_ms: 12000
     settle_after_ready_ms: 800
+    max_scroll_rounds_per_refresh: 8
+    scroll_after_load_ms: 900
   selectors:
     note_card_selectors:
       - 'a[href*="/explore/"]'
@@ -26,6 +29,13 @@ published_note_metrics:
       - '[class*="title"]'
       - 'h1'
       - 'h2'
+    content_selectors:
+      - '#detail-desc'
+      - '#detail-desc .note-text'
+      - '[class*="note-content"]'
+      - '[class*="NoteContent"]'
+      - '[class*="desc"]'
+      - '[class*="content"]'
     interaction_selectors:
       - 'button'
       - '[role="button"]'
