@@ -260,6 +260,7 @@ class MemoryRetriever:
         self.config = config or load_memory_config()
         self._embedding_index: MemoryEmbeddingIndex | None = None
         self._chunks_cache: list[MemoryChunk] | None = None
+        self._chunks_cache_signature: tuple[tuple[str, int, int], ...] | None = None
 
     def _tokenize(self, text: str) -> list[str]:
         text = str(text or "").lower()
@@ -297,9 +298,26 @@ class MemoryRetriever:
         return chunks
 
     def _all_chunks(self) -> list[MemoryChunk]:
-        if self._chunks_cache is None:
+        signature = self._memory_source_signature()
+        if self._chunks_cache is None or self._chunks_cache_signature != signature:
             self._chunks_cache = build_memory_chunks(self.config)
+            self._chunks_cache_signature = signature
         return self._chunks_cache
+
+    def _memory_source_signature(self) -> tuple[tuple[str, int, int], ...]:
+        files = self.config.get("files") if isinstance(self.config.get("files"), dict) else {}
+        source_paths = [
+            _resolve_project_path(files.get("worklog"), "agent_memory/xhs_agent_worklog.json"),
+            _resolve_project_path(files.get("exploration"), "agent_memory/xhs_exploration_memory.json"),
+        ]
+        signature = []
+        for path in source_paths:
+            if path.exists():
+                stat = path.stat()
+                signature.append((str(path), int(stat.st_mtime_ns), int(stat.st_size)))
+            else:
+                signature.append((str(path), 0, 0))
+        return tuple(signature)
 
     def _bm25_scores(self, query: str, chunks: list[MemoryChunk]) -> list[tuple[float, MemoryChunk]]:
         query_tokens = self._tokenize(query)

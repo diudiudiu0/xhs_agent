@@ -258,6 +258,40 @@ def _pick_title(extracted: dict[str, Any]) -> str:
     return meta_title[:180]
 
 
+def _is_useful_content_candidate(text: str, title: str, comments: list[dict[str, str]]) -> bool:
+    text = _compact_spaces(text)
+    if len(text) < 6:
+        return False
+    if title and _normalize_key_text(text) == _normalize_key_text(title):
+        return False
+    if _is_valid_published_at_candidate(text) and len(text) <= 100:
+        return False
+    if re.search(r"共\s*\d+\s*条评论|THE END|说点什么|发送|取消", text):
+        return False
+    comment_hits = 0
+    for comment in comments[:5]:
+        content = _compact_spaces(comment.get("content") or "")
+        if content and content in text:
+            comment_hits += 1
+    return comment_hits < 2
+
+
+def _pick_content(extracted: dict[str, Any], title: str, comments: list[dict[str, str]]) -> str:
+    candidates = []
+    seen = set()
+    for candidate in extracted.get("contentCandidates") or []:
+        text = _compact_spaces(candidate)
+        key = _normalize_key_text(text)
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        if _is_useful_content_candidate(text, title, comments):
+            candidates.append(text)
+    if candidates:
+        return max(candidates, key=len)[:5000]
+    return ""
+
+
 async def _click_visible_text(page, texts: list[str], wait_ms: int) -> bool:
     for text in texts:
         if not text:
@@ -443,11 +477,37 @@ async def _find_note_card_candidates(page, config: dict[str, Any]) -> list[dict[
     )
 
 
+async def _load_note_card_candidates(page, config: dict[str, Any]) -> list[dict[str, Any]]:
+    navigation = config.get("navigation") or {}
+    max_notes = int(config.get("max_notes_per_refresh") or 30)
+    max_scroll_rounds = int(navigation.get("max_scroll_rounds_per_refresh") or 8)
+    scroll_wait_ms = int(navigation.get("scroll_after_load_ms") or 900)
+    previous_count = -1
+    stable_rounds = 0
+    candidates = []
+    for _ in range(max_scroll_rounds + 1):
+        candidates = await _find_note_card_candidates(page, config)
+        if len(candidates) >= max_notes:
+            break
+        if len(candidates) == previous_count:
+            stable_rounds += 1
+            if stable_rounds >= 2:
+                break
+        else:
+            stable_rounds = 0
+            previous_count = len(candidates)
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await page.wait_for_timeout(scroll_wait_ms)
+    await page.evaluate("window.scrollTo(0, 0)")
+    await page.wait_for_timeout(scroll_wait_ms)
+    return await _find_note_card_candidates(page, config)
+
+
 async def click_profile_note_by_index(page, note_index: int = 0, config: dict[str, Any] | None = None):
     config = config or load_account_data_config()
     note_index = max(0, int(note_index))
     await _wait_for_note_cards_ready(page, config)
-    candidates = await _find_note_card_candidates(page, config)
+    candidates = await (_find_note_card_candidates(page, config) if note_index == 0 else _load_note_card_candidates(page, config))
     if not candidates:
         raise RuntimeError("未找到个人主页笔记卡片，请确认已经进入“我 -> 笔记”页面。")
     if note_index >= len(candidates):
@@ -585,6 +645,7 @@ async def extract_note_metrics_from_detail_page(page, config: dict[str, Any] | N
                 documentTitle: document.title || '',
                 bodyText: document.body ? document.body.innerText : '',
                 titleCandidates: pickTexts(config.title_selectors, 20),
+                contentCandidates: pickTexts(config.content_selectors, 30),
                 publishTimeCandidates: pickPublishTimeCandidates(30),
                 commentCandidates: pickCommentCandidates(config.comment_selectors, config.max_comment_items || 80),
                 interactionCandidates: pickInteractionCandidates(config.interaction_selectors, 240),
@@ -592,6 +653,7 @@ async def extract_note_metrics_from_detail_page(page, config: dict[str, Any] | N
         }""",
         {
             "title_selectors": selectors.get("title_selectors") or [],
+            "content_selectors": selectors.get("content_selectors") or [],
             "comment_selectors": selectors.get("comment_selectors") or [],
             "interaction_selectors": selectors.get("interaction_selectors") or [],
             "max_comment_items": extraction.get("max_comment_items") or 80,
@@ -604,9 +666,11 @@ async def extract_note_metrics_from_detail_page(page, config: dict[str, Any] | N
     comments = _clean_comment_items(extracted.get("commentCandidates") or [], config)
     comment_count = _extract_metric_from_text(body_text, extraction.get("comment_count_patterns") or [])
     published_at = _pick_published_at(extracted, extraction.get("published_at_patterns") or [])
+    title = _pick_title(extracted)
 
     return {
-        "title": _pick_title(extracted),
+        "title": title,
+        "content": _pick_content(extracted, title, comments),
         "published_at": published_at,
         "comment_count": comment_count if comment_count is not None else len(comments),
         "comments": comments,
@@ -668,6 +732,101 @@ def save_note_metrics_if_new(note: dict[str, Any], output_file: str | Path | Non
         "added": added,
         "duplicate": duplicate,
         "note_count": len(data["notes"]),
+    }
+
+
+def save_note_metrics_snapshot(notes: list[dict[str, Any]], output_file: str | Path | None = None) -> dict[str, Any]:
+    config = load_account_data_config()
+    path = _resolve_project_path(output_file, str(config.get("output_file") or "data/xhs_published_note_metrics.json"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    deduped_notes = []
+    seen = set()
+    duplicate_count = 0
+    for note in notes:
+        title_key = _normalize_key_text(note.get("title") or "")
+        time_key = _published_at_key(note)
+        key = (title_key, time_key)
+        if key in seen:
+            duplicate_count += 1
+            continue
+        seen.add(key)
+        deduped_notes.append(note)
+
+    data = {
+        "version": 2,
+        "updated_at": _now_iso(),
+        "refresh_mode": "full_published_notes_snapshot",
+        "dedupe_key": ["title", "published_at"],
+        "notes": deduped_notes,
+    }
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "output_file": str(path),
+        "added": True,
+        "duplicate": False,
+        "overwritten": True,
+        "duplicate_count": duplicate_count,
+        "note_count": len(deduped_notes),
+    }
+
+
+async def _return_to_note_list(page, config: dict[str, Any]):
+    navigation = config.get("navigation") or {}
+    try:
+        await page.go_back(wait_until="domcontentloaded", timeout=10000)
+    except Exception:
+        pass
+    await _wait_for_page_settle(
+        page,
+        settle_ms=int(navigation.get("settle_after_ready_ms") or 800),
+        timeout_ms=int(navigation.get("note_cards_ready_timeout_ms") or 12000),
+    )
+
+
+async def collect_all_published_note_metrics(
+    page,
+    output_file: str | Path | None = None,
+    max_notes: int | None = None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    config = config or load_account_data_config()
+    navigation_result = await open_own_profile_notes(page, config)
+    initial_candidates = await _load_note_card_candidates(page, config)
+    limit = int(max_notes if max_notes is not None else config.get("max_notes_per_refresh", 30))
+    total = min(max(0, limit), len(initial_candidates))
+    notes = []
+    cards = []
+    errors = []
+
+    for note_index in range(total):
+        try:
+            await open_own_profile_notes(page, config)
+            detail_page, selected_card = await click_profile_note_by_index(page, note_index=note_index, config=config)
+            note = await extract_note_metrics_from_detail_page(detail_page, config)
+            notes.append(note)
+            cards.append(selected_card)
+            if detail_page is page:
+                await _return_to_note_list(page, config)
+            elif not detail_page.is_closed():
+                await detail_page.close()
+        except Exception as exc:
+            errors.append({"note_index": note_index, "error": str(exc)})
+            if page.is_closed():
+                break
+            try:
+                await open_own_profile_notes(page, config)
+            except Exception:
+                pass
+
+    save_result = save_note_metrics_snapshot(notes, output_file=output_file)
+    return {
+        "success": not errors,
+        "navigation": navigation_result,
+        "notes": notes,
+        "cards": cards,
+        "errors": errors,
+        "storage": save_result,
     }
 
 

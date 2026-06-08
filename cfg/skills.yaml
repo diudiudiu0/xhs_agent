@@ -281,7 +281,7 @@ skills:
       next_suggestion: 可以查看草稿箱确认保存结果，或继续生成下一篇选题。
 
   collect_latest_published_note_metrics:
-    description: 打开或复用小红书主站，进入“我 -> 笔记”，点击最上方一条已发布笔记，采集发布时间、标题、评论、评论数量、收藏数、点赞数和分享数，并按标题和发布时间去重保存到本地 JSON。
+    description: 打开或复用小红书主站，进入“我 -> 笔记”，点击指定索引的一条已发布笔记，采集发布时间、标题、正文、评论、评论数量、收藏数、点赞数和分享数，并按标题和发布时间去重保存到本地 JSON。
     executor_type: workflow
     executor_agent: web_note_metrics_collector
     autonomy_level: medium
@@ -290,7 +290,7 @@ skills:
       note_index: 可选。个人主页笔记列表中的索引，0 表示最上方第一条。
       output_file: 可选。保存 JSON 的本机路径；为空时使用 cfg/account_data.yaml 中的 output_file。
     output_schema:
-      note: 采集到的单篇笔记数据。
+      note: 采集到的单篇笔记数据，包含 title、content、published_at、comments、comment_count、collect_count、like_count、share_count。
       storage: JSON 写入结果，包括 added、duplicate、output_file 和 note_count。
     preconditions:
       - 需要先运行 test/integration/browser_session_control.py --target web --mode login 完成小红书主站登录。
@@ -327,24 +327,24 @@ skills:
       observation_counts: 点赞={like_count} 收藏={collect_count} 评论={comment_count} 分享={share_count}
 
   collect_note_metrics:
-    description: 采集已发布笔记的数据指标。当前实现支持按个人主页笔记索引采集单篇笔记，默认采集最上方第一篇，并把结果按标题和发布日期去重写入 data/xhs_published_note_metrics.json。
+    description: 刷新采集当前个人主页“笔记”页中可见的全部已发布笔记数据。会逐篇打开笔记详情，采集标题、正文、发布时间、评论楼主内容、评论数量、收藏数、点赞数和分享数，并覆盖写入 data/xhs_published_note_metrics.json，形成一次完整账号数据快照。
     executor_type: workflow
     executor_agent: web_note_metrics_collector
     autonomy_level: medium
-    manager_role: manager 在用户要求采集笔记互动数据、更新账号数据、读取最新笔记表现时调用；如果用户没有指定范围，默认采集最新一篇。
+    manager_role: manager 在用户要求采集笔记互动数据、更新账号数据、刷新已发布笔记表现、准备账号分析时调用；如果用户没有指定范围，默认刷新当前可见全部已发布笔记。
     input_schema:
-      note_index: 可选。个人主页笔记列表中的索引，0 表示第一篇。
+      max_notes: 可选。本次最多刷新多少篇；为空时使用 cfg/account_data.yaml 中的 max_notes_per_refresh。
       output_file: 可选。保存 JSON 的本机路径。
     output_schema:
-      note: 采集到的单篇笔记数据。
-      storage: JSON 写入结果。
+      notes: 本次采集到的全部笔记数据列表，每篇包含 title、content、published_at、comments、comment_count、collect_count、like_count、share_count。
+      storage: JSON 覆盖写入结果。
     preconditions:
       - 需要先运行 test/integration/browser_session_control.py --target web --mode login 完成小红书主站登录。
     memory_reads:
       - browser_session
       - account_data_config
     memory_writes:
-      - last_collected_note_metrics
+      - last_collected_published_notes
       - last_collected_note_metrics_file
     risk_policy:
       requires_confirmation_for: []
@@ -361,13 +361,14 @@ skills:
       - web_site
       - workflow
     examples:
-      - 采集我最新一篇笔记的数据
-      - 更新主页第一篇笔记的互动指标
+      - 刷新我主页全部已发布笔记的数据
+      - 更新账号笔记互动指标，顺便保存正文
+      - 采集已发布笔记数据用于账号分析
     messages:
-      success: 已采集笔记数据：{title} -> {output_file}
-      duplicate: 检测到同标题同发布日期的记录已存在，未重复写入：{title}
-      observation_title: 标题：{title}
-      observation_counts: 点赞={like_count} 收藏={collect_count} 评论={comment_count} 分享={share_count}
+      success: 已刷新 {count} 篇已发布笔记数据 -> {output_file}
+      partial_success: 已刷新 {count} 篇已发布笔记数据，另有 {error_count} 篇采集失败 -> {output_file}
+      observation_count: 本次刷新笔记数量：{count}
+      observation_note: "{index}. {title}（{published_at}）点赞={like_count} 收藏={collect_count} 评论={comment_count}"
 
   analyze_account_performance:
     description: 读取 data/xhs_published_note_metrics.json，对账号已采集笔记进行表现分析，包括总指标、平均指标、高互动笔记、关键词、评论样本和运营洞察。
