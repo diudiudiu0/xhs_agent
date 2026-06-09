@@ -64,6 +64,9 @@ class FakeMemory:
     def search(self, user_message):
         return [{"user_request": "old request", "summary": "old path"}]
 
+    def search_step(self, user_message, state, goal_memory_hints=None, last_observation=None):
+        return [{"user_request": "step request", "summary": "step path"}]
+
     def remember_success(self, state):
         self.remembered.append(state.current_goal)
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import Any
 
 from skills.catalog import DEFAULT_SKILL_REGISTRY
+from src.agent_runtime import AgentRuntimeHooks, AgentWorkflowRuntime
 from src.manager_config import load_manager_config, manager_config_get, manager_config_list
 from src.manager_executor import ManagerExecutor, compact_skill_result
 from src.manager_memory import ManagerMemory
@@ -70,74 +70,36 @@ class ManagerAgent:
         memory_hints: list[dict[str, Any]],
         initial_decision: dict[str, Any] | None = None,
     ) -> str:
-        max_steps = int(manager_config_get("max_steps_per_turn", 8) or 8)
-        last_result = self.state.last_skill_result or {}
-        decision = initial_decision
+        runtime = AgentWorkflowRuntime(
+            state=self.state,
+            hooks=AgentRuntimeHooks(
+                plan_next=self._plan_next_step,
+                execute_skill_decision=self._handle_call_skill_decision,
+                remember_success=self.memory.remember_success,
+                format_skill_failure=self._skill_failure_message,
+                refresh_step_memory=self.memory.search_step,
+            ),
+            max_steps=int(manager_config_get("max_steps_per_turn", 8) or 8),
+        )
+        return await runtime.run(
+            goal=user_message,
+            memory_hints=memory_hints,
+            initial_decision=initial_decision,
+        )
 
-        for _ in range(max_steps):
-            if decision is None:
-                decision = self.planner.plan(
-                    user_message=user_message,
-                    state=self.state,
-                    memory_hints=memory_hints,
-                    last_skill_result=last_result,
-                )
-
-            decision_type = decision.get("type")
-            if decision_type == "call_skill":
-                answer = await self._handle_call_skill_decision(decision, user_message, memory_hints)
-                if answer is not None:
-                    return answer
-                last_result = self.state.last_skill_result
-                decision = None
-                continue
-
-            if decision_type == "ask_user":
-                step = self.state.add_step(
-                    decision_type="ask_user",
-                    sub_goal=decision.get("message", ""),
-                    reason=decision.get("reason", ""),
-                    status="waiting_user",
-                )
-                message = decision.get("message") or ""
-                self.state.update_step_result(step, "completed", {"message": message})
-                self.state.status = "waiting_user_input"
-                return message
-
-            if decision_type == "wait":
-                step = self.state.add_step(
-                    decision_type="wait",
-                    sub_goal=decision.get("reason", ""),
-                    reason=decision.get("reason", ""),
-                    status="in_progress",
-                )
-                await asyncio.sleep(float(decision.get("seconds") or 1))
-                self.state.update_step_result(step, "completed", {"message": "waited"})
-                decision = None
-                continue
-
-            message = decision.get("message") or str(manager_config_get("fallback_final_answer", ""))
-            step = self.state.add_step(
-                decision_type="final_answer",
-                sub_goal="answer user",
-                success_criteria="final answer returned",
-                reason=decision.get("reason", ""),
-                status="completed",
-            )
-            if last_result and last_result.get("success") is False:
-                error_message = self._skill_failure_message(last_result)
-                self.state.update_step_result(step, "failed", {"message": error_message})
-                self.state.fail(error_message)
-                return error_message
-
-            self.state.update_step_result(step, "completed", {"message": message})
-            self.state.complete(message)
-            self.memory.remember_success(self.state)
-            return message
-
-        answer = "This turn reached the manager step limit and stopped."
-        self.state.fail(answer)
-        return answer
+    def _plan_next_step(
+        self,
+        user_message: str,
+        state: ManagerState,
+        memory_hints: list[dict[str, Any]],
+        last_skill_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.planner.plan(
+            user_message=user_message,
+            state=state,
+            memory_hints=memory_hints,
+            last_skill_result=last_skill_result,
+        )
 
     def _skill_failure_message(self, result: dict[str, Any]) -> str:
         skill_name = result.get("skill_name") or "unknown_skill"

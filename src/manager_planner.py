@@ -145,6 +145,13 @@ class ManagerPlanner:
         behavior_rules = "\n".join(f"- {item}" for item in self.config.get("behavior_rules", []))
         template = str(self.config.get("planner_prompt_template") or "")
         recent_steps = int(self.config.get("max_recent_steps") or 10)
+        memory_package = {
+            "usage": {
+                "goal": "These memories were retrieved once from the user's overall goal and apply to the whole task.",
+                "current_step": "These memories were retrieved for the current planning step only. Do not treat them as evidence about already completed steps.",
+            },
+            "items": memory_hints or [],
+        }
         return render_prompt_template(
             template,
             system_prompt=self.config.get("system_prompt", ""),
@@ -153,7 +160,7 @@ class ManagerPlanner:
             user_message=user_message,
             manager_state_json=json.dumps(state.to_dict(recent_steps=recent_steps), ensure_ascii=False, indent=2),
             skill_catalog=render_skill_catalog(),
-            memory_hints_json=json.dumps(memory_hints or [], ensure_ascii=False, indent=2),
+            memory_hints_json=json.dumps(memory_package, ensure_ascii=False, indent=2),
             last_skill_result_json=json.dumps(last_skill_result or state.last_skill_result or {}, ensure_ascii=False, indent=2),
         )
 

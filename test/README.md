@@ -42,6 +42,9 @@
 - `unit/test_manager_agent.py`
   Uses fake planner/executor objects to verify manager planning, skill execution, memory updates, and confirmation flow.
 
+- `unit/test_agent_runtime.py`
+  Verifies the generic Goal -> Plan -> Step -> Skill -> Observation -> Memory loop used by `ManagerAgent`.
+
 - `unit/test_page_context.py`
   Verifies page-context update and summarization logic.
 
