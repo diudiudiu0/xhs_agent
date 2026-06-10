@@ -19,6 +19,7 @@ page_context:
     - missing 表示下一步继续完成任务缺少什么。
     - task_stage 要简短稳定，例如 locating_target、opening_preview、reading_preview、reply_box_opened、reply_text_filled、waiting_confirmation、done。
     - 如果动作没有帮助，也要在 last_action_effect 中记录，但不要错误覆盖已经确认的 target 和 collected。
+    - navigation_path 记录本轮任务走过的界面路径和动作效果，只用于帮助页面 Agent 避免重复走死路；不要把它当作自动回退指令。
     - 如果页面出现预览弹窗，应记录 preview_modal_open=true，并尽量提取帖子相关信息。
     - 如果页面出现回复/评论输入框，应记录 reply_box_visible=true、reply_box_hint、reply_box_filled。
     - 如果点击发送、发布、删除等公开或高风险动作之前，应把 missing 设置为 user_confirmation。
@@ -35,6 +36,7 @@ page_context:
     ui_state: {}
     missing: []
     last_action_effect: ""
+    navigation_path: []
 
   update_prompt_template: |
     请更新 page_context。
@@ -62,7 +64,8 @@ page_context:
 
     输出要求：
     - 只输出一个 JSON 对象。
-    - 必须包含字段：schema_version、site、page_phase、current_url、current_task、task_stage、target、collected、ui_state、missing、last_action_effect。
+    - 必须包含字段：schema_version、site、page_phase、current_url、current_task、task_stage、target、collected、ui_state、missing、last_action_effect、navigation_path。
     - target、collected、ui_state 必须是对象。
     - missing 必须是字符串数组。
+    - navigation_path 必须是数组，保留旧 context 中已有路径即可，不要编造路径；程序会在动作完成后追加本步路径。
     - 不要输出多余解释。

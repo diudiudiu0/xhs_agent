@@ -23,6 +23,9 @@ def main():
     planner_template = get_prompt_config("page_explorer", "planner_prompt_template", default="")
     if "{user_goal}" not in planner_template or "{snapshot_json}" not in planner_template:
         raise AssertionError("page_explorer planner template missing required placeholders")
+    repair_template = get_prompt_config("page_explorer", "action_repair_prompt_template", default="")
+    if "{raw_model_output}" not in repair_template or "{tool_catalog}" not in repair_template:
+        raise AssertionError("page_explorer action repair template missing required placeholders")
 
     rendered = render_prompt_template("goal={user_goal}; data={data}", user_goal="test", data='{"ok": true}')
     if rendered != 'goal=test; data={"ok": true}':

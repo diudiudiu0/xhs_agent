@@ -27,6 +27,7 @@ def main():
         "review_risky_action",
         "open_creator_page",
         "get_page_state",
+        "observe_page_report",
         "explore_page_task",
         "handle_dialogs",
         "search_long_term_memory",
@@ -50,6 +51,14 @@ def main():
         raise AssertionError("explore_page_task should advertise web site support")
     if "comments" not in explorer.get("tags", []):
         raise AssertionError("explore_page_task should advertise comment support")
+
+    observer = specs["observe_page_report"]
+    if observer.get("executor_agent") != "browser_state":
+        raise AssertionError("observe_page_report should use browser_state")
+    if "page_observation_report" not in observer.get("tags", []):
+        raise AssertionError("observe_page_report should advertise page_observation_report")
+    if "does_not_modify_page" not in observer.get("side_effects", []):
+        raise AssertionError("observe_page_report must be read-only")
 
     draft = specs["create_note_draft"]
     if draft.get("executor_type") != "workflow":
@@ -94,6 +103,7 @@ def main():
         "review_risky_action",
         "search_long_term_memory",
         "create_generated_note_draft",
+        "observe_page_report",
     ):
         if text not in catalog:
             raise AssertionError(f"rendered catalog missing: {text}")

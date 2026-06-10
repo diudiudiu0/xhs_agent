@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from src.browser_state import summarize_browser_state
+from src.browser_state import build_page_observation_report, summarize_browser_state
 from src.skill_scope_config import merge_action_constraints
 from skills.base import BaseSkill, SkillContext, SkillResult
 from skills.config import build_skill_spec, skill_message
@@ -38,6 +38,37 @@ class GetPageStateSkill(BaseSkill):
             message=summary,
             data={"state": state, "summary": summary},
             observations=[summary],
+        )
+
+
+class ObservePageReportSkill(BaseSkill):
+    spec = build_skill_spec("observe_page_report")
+
+    async def run(self, context: SkillContext, args: dict[str, Any] | None = None) -> SkillResult:
+        args = args or {}
+        skills = context.require_xhs_skills()
+        if args.get("target_site") or args.get("site"):
+            await skills.open_page(args.get("target_site") or args.get("site"))
+        state = await skills.get_page_state()
+        report = build_page_observation_report(state)
+        message = skill_message(
+            self.name,
+            "success",
+            site=report.get("site", ""),
+            blocking_state=report.get("blocking_state", ""),
+            recommended_next=report.get("recommended_next", ""),
+        )
+        observations = [
+            report.get("raw_state_summary", ""),
+            f"blocking_state={report.get('blocking_state', '')}",
+            f"recommended_next={report.get('recommended_next', '')}",
+        ]
+        return SkillResult.ok(
+            self.name,
+            message=message,
+            data={"report": report},
+            observations=[item for item in observations if item],
+            memory_updates={"last_page_observation_report": report},
         )
 
 
@@ -115,6 +146,7 @@ class HandleDialogsSkill(BaseSkill):
 PAGE_SKILLS = [
     OpenCreatorPageSkill(),
     GetPageStateSkill(),
+    ObservePageReportSkill(),
     ExplorePageTaskSkill(),
     HandleDialogsSkill(),
 ]

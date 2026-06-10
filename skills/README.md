@@ -31,6 +31,7 @@
 - `review_risky_action`
 - `open_creator_page`
 - `get_page_state`
+- `observe_page_report`
 - `explore_page_task`
 - `handle_dialogs`
 - `search_long_term_memory`

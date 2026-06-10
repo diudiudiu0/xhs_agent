@@ -634,6 +634,45 @@ skills:
     messages:
       success: 页面状态已获取。
 
+  observe_page_report:
+    description: 生成给 manager_agent 阅读的页面观察报告。它不会暴露完整 DOM，而是返回当前站点、URL、加载状态、阻塞状态、网页弹窗、文件上传 input、重要可交互文本、页面可见摘要和建议下一步。
+    executor_type: tool
+    executor_agent: browser_state
+    autonomy_level: low
+    manager_role: manager 在需要了解“当前页面在哪里、页面是否加载完成、是否有弹窗/上传线索、有哪些重要按钮”时调用；如果要点击按钮、填写输入框、上传文件、删除、保存、回复评论等页面动作，应调用 explore_page_task，让 page_explorer 作为手脚执行。
+    input_schema:
+      target_site: 可选。creator 或 web；传入时先切换/打开对应页面。
+    output_schema:
+      report: 标准化 page_observation_report，包含 site、url、loading_phase、blocking_state、visible_summary、important_elements、dialogs、file_inputs、recommended_next。
+    preconditions:
+      - 需要可用浏览器会话；没有时会打开默认页面。
+    memory_reads:
+      - browser_session
+      - page_state
+    memory_writes:
+      - last_page_observation_report
+    risk_policy:
+      requires_confirmation_for: []
+    risk_level: low
+    side_effects:
+      - opens_browser_if_needed
+      - reads_page_state
+      - does_not_click_page
+      - does_not_modify_page
+    tags:
+      - page
+      - browser
+      - observe
+      - page_observation_report
+      - manager_eyes
+      - tool
+    examples:
+      - 看一下当前页面是什么状态
+      - 判断现在页面有没有弹窗或者上传框
+      - 先观察当前页面，再决定是否让页面 agent 操作
+    messages:
+      success: 页面观察报告已生成：site={site} blocking={blocking_state} next={recommended_next}
+
   explore_page_task:
     description: 高自治网页探索 agent。用于在创作中心和小红书主站之间自由切换，完成依赖当前网页状态的任务，包括查看草稿箱、读取或编辑草稿标题正文、保存当前草稿、删除目标草稿、打开主页、查看帖子详情、读取评论、点击评论右侧帖子封面预览、根据帖子内容回复评论等。
     executor_type: agent

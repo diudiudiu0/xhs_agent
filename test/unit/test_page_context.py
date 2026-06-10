@@ -38,12 +38,40 @@ def main():
         "ui_state",
         "missing",
         "last_action_effect",
+        "navigation_path",
     }
     missing = required_keys - set(context)
     if missing:
         raise AssertionError(f"page_context missing fields: {sorted(missing)}")
     if context["site"] != "web":
         raise AssertionError("page_context site was not synchronized")
+    if context["navigation_path"] != []:
+        raise AssertionError("page_context navigation_path should start empty")
+
+    manager.config["update_prompt_template"] = ""
+    manager.update(
+        "reply to a comment based on the related note content",
+        {"action": "click", "element_index": 7, "reason": "open note management"},
+        "已点击",
+        "点击后页面从首页进入笔记管理页。",
+        {
+            "site": "creator",
+            "page_phase": "creator_home",
+            "url": "https://creator.xiaohongshu.com/new/home",
+        },
+        {
+            "site": "creator",
+            "page_phase": "note_management",
+            "url": "https://creator.xiaohongshu.com/creator/notes",
+        },
+    )
+    path = manager.context.get("navigation_path")
+    if not isinstance(path, list) or len(path) != 1:
+        raise AssertionError("page_context navigation_path did not record the update step")
+    if "click" not in path[0].get("action", ""):
+        raise AssertionError("page_context navigation_path action is missing")
+    if "note_management" not in path[0].get("to", ""):
+        raise AssertionError("page_context navigation_path destination is missing")
     if not manager.render():
         raise AssertionError("page_context render is empty")
     print("page_context config and default structure check passed")

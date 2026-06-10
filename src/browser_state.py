@@ -195,6 +195,7 @@ async def observe_browser_state(page) -> dict:
             "text_length": dom_state.get("text_length", 0),
             "text_signature": _short_hash(visible_text),
             "page_signature": signature,
+            "visible_text_sample": visible_text[:1200],
             "spinner_count": dom_state.get("spinner_count", 0),
             "button_texts": dom_state.get("button_texts", []),
         },
@@ -246,6 +247,70 @@ def summarize_browser_state(state: dict | None) -> str:
         f"spinners={dom.get('spinner_count', 0)} "
         f"url={state.get('url', '')}"
     )
+
+
+def build_page_observation_report(state: dict | None) -> dict:
+    state = state or {}
+    dom = state.get("dom") or {}
+    dialogs = state.get("dialogs") or {}
+    system_dialog = state.get("system_dialog") or {}
+    file_inputs = state.get("file_inputs") or []
+    url = state.get("url") or ""
+    button_texts = [str(item) for item in dom.get("button_texts") or [] if str(item).strip()]
+    visible_text = str(dom.get("visible_text_sample") or "")
+
+    if state.get("page_closed"):
+        blocking_state = "page_closed"
+    elif system_dialog.get("possible_native_dialog_open"):
+        blocking_state = "native_dialog_possible"
+    elif dialogs.get("visible"):
+        blocking_state = "web_dialog_visible"
+    elif state.get("loading_phase") in {"dom_loading", "page_loading", "network_busy"}:
+        blocking_state = "page_loading"
+    elif not state.get("page_responsive"):
+        blocking_state = "page_not_responsive"
+    else:
+        blocking_state = ""
+
+    if "creator.xiaohongshu.com" in url:
+        site = "creator"
+    elif "xiaohongshu.com" in url:
+        site = "web"
+    else:
+        site = "unknown"
+
+    if blocking_state == "page_loading":
+        recommended_next = "wait_or_get_page_state_again"
+    elif blocking_state in {"web_dialog_visible", "native_dialog_possible"}:
+        recommended_next = "handle_dialog_or_ask_page_explorer"
+    elif file_inputs:
+        recommended_next = "page_can_upload_local_files_if_task_requires_media"
+    else:
+        recommended_next = "choose_next_skill_or_delegate_page_action"
+
+    return {
+        "site": site,
+        "url": url,
+        "title": state.get("title", ""),
+        "loading_phase": state.get("loading_phase", ""),
+        "ready_state": state.get("ready_state", ""),
+        "page_responsive": bool(state.get("page_responsive")),
+        "blocking_state": blocking_state,
+        "visible_summary": visible_text[:800],
+        "important_elements": [
+            {"text": text, "kind": "button_or_clickable"}
+            for text in button_texts[:20]
+        ],
+        "dialogs": {
+            "visible": bool(dialogs.get("visible")),
+            "count": int(dialogs.get("count") or 0),
+            "items": dialogs.get("items") or [],
+        },
+        "file_inputs": file_inputs[:10],
+        "system_dialog": system_dialog,
+        "recommended_next": recommended_next,
+        "raw_state_summary": summarize_browser_state(state),
+    }
 
 
 async def wait_for_browser_feedback(

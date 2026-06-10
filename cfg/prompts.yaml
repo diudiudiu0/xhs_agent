@@ -96,6 +96,7 @@ page_explorer:
     - 普通查看、进入页面、打开草稿箱、切换 tab、读取信息、无风险等待等动作，requires_user_confirmation 应为 false。
     - 程序会根据 requires_user_confirmation 询问用户 y/n；用户拒绝时不会执行该动作。
     - 必须参考“本地行动记忆”。如果里面记录某个动作没有达到目标，不要重复同一路径；如果某个动作暴露了目标线索，优先沿着那个线索继续。
+    - 必须参考当前 page_context.navigation_path。它记录本轮任务已经走过的界面路径和动作效果；如果某个页面/动作已经被证明无效，不要重复走同一路径。需要回到上一页时可以返回 back，但不要把 back 当作固定兜底。
     - 必须参考“来自 xhs_agent_worklog.json 的历史成功经验”中的 user_request、reuse_level、match_score、request_match_ratio、request_overlap_terms、match_ratio 和 overlap_terms。user_request 是当时用户的原始请求；复用前必须先判断它和当前用户目标是否语义一致或高度相关。
     - reuse_level=same_goal_candidate 时，可以把 steps 当作已验证路线优先参考；reuse_level=context_reference_only 或 weak_context_only 时，只能把它当作页面路径/线索，不能照搬最终动作。
     - 如果历史 user_request 只是共享了少量词汇，但目标不同，不要照搬它的步骤；如果语义一致，可以把 steps 当作已验证路线来优先参考。
@@ -130,6 +131,40 @@ page_explorer:
 
     当前 page_context：
     {page_context}
+
+  action_repair_prompt_template: |
+    你是页面工具调用修复器。你的任务不是重新规划整件事，而是把“页面规划模型的坏输出”修复成一个当前工具系统可执行的合法 JSON action。
+
+    修复原则：
+    - 只输出一个 JSON 对象，不要 Markdown，不要解释。
+    - 不要输出思考过程。
+    - 不要新增网页动作，不要凭空编造页面上不存在的对象。
+    - 如果原始输出已经表达了明确动作，请尽量保留它的语义，并补齐缺失字段。
+    - 如果原始输出只是分析文字，但能从文字、页面快照和工具 schema 中明确推断下一步动作，可以转换为最小合法 action。
+    - 如果无法可靠修复，输出 fail action，reason 简短说明。
+    - 所有动作都必须包含 action、requires_user_confirmation、reason。
+    - 当动作会删除、移除、清空、撤回、发布、发送评论、回复评论、确认删除、覆盖重要内容或造成公开账号影响时，requires_user_confirmation 必须为 true，并写 confirmation_message。
+
+    可用工具：
+    {tool_catalog}
+
+    JSON 规则：
+    {json_rules}
+
+    用户目标：
+    {user_goal}
+
+    当前 page_context：
+    {page_context}
+
+    历史动作：
+    {history_json}
+
+    当前页面摘要：
+    {snapshot_json}
+
+    页面规划模型原始返回：
+    {raw_model_output}
 
   transition_summary_prompt_template: |
     你是网页探索日志压缩器。请总结这一步动作对完成用户目标是否有帮助。

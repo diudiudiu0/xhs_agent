@@ -70,11 +70,51 @@ def _normalize_context(value: dict | None, default_context: dict) -> dict:
         context["missing"] = [str(missing)]
     else:
         context["missing"] = []
+    navigation_path = context.get("navigation_path")
+    if isinstance(navigation_path, list):
+        normalized_path = []
+        for item in navigation_path:
+            if isinstance(item, dict):
+                normalized_path.append(
+                    {
+                        "from": _compact_text(item.get("from", ""), 120),
+                        "action": _compact_text(item.get("action", ""), 120),
+                        "to": _compact_text(item.get("to", ""), 120),
+                        "effect": _compact_text(item.get("effect", ""), 220),
+                    }
+                )
+        context["navigation_path"] = normalized_path[-10:]
+    else:
+        context["navigation_path"] = []
     for key in ("site", "page_phase", "current_url", "current_task", "task_stage", "last_action_effect"):
         context[key] = str(context.get(key) or "")
     if not context["task_stage"]:
         context["task_stage"] = "not_started"
     return context
+
+
+def _page_label(snapshot: dict | None) -> str:
+    if not isinstance(snapshot, dict):
+        return ""
+    site = str(snapshot.get("site") or "").strip()
+    phase = str(snapshot.get("page_phase") or "").strip()
+    url = str(snapshot.get("url") or snapshot.get("current_url") or "").strip()
+    label = " / ".join(part for part in (site, phase) if part)
+    if url:
+        label = f"{label} @ {url}" if label else url
+    return _compact_text(label, 160)
+
+
+def _action_label(action: dict | None) -> str:
+    if not isinstance(action, dict):
+        return ""
+    name = str(action.get("action") or "").strip()
+    parts = [name] if name else []
+    for key in ("element_index", "text", "near_text", "target_text", "value"):
+        value = action.get(key)
+        if value is not None and str(value).strip():
+            parts.append(f"{key}={_compact_text(value, 60)}")
+    return _compact_text(" ".join(parts), 160)
 
 
 class PageContextManager:
@@ -97,6 +137,7 @@ class PageContextManager:
                 "ui_state": {},
                 "missing": [],
                 "last_action_effect": "",
+                "navigation_path": [],
             },
         )
         self.context = deepcopy(self.default_context)
@@ -116,6 +157,28 @@ class PageContextManager:
         self.context["current_url"] = str(snapshot.get("url") or self.context.get("current_url") or "")
         return self.context
 
+    def _append_navigation_step(
+        self,
+        action: dict,
+        result: str,
+        observation: str,
+        before_snapshot: dict,
+        after_snapshot: dict,
+    ) -> None:
+        path = self.context.get("navigation_path")
+        if not isinstance(path, list):
+            path = []
+        entry = {
+            "from": _page_label(before_snapshot),
+            "action": _action_label(action),
+            "to": _page_label(after_snapshot),
+            "effect": _compact_text(observation or result, 220),
+        }
+        if not any(entry.values()):
+            return
+        path.append(entry)
+        self.context["navigation_path"] = path[-10:]
+
     def render(self, limit: int = 2200) -> str:
         return _compact_text(json.dumps(self.context, ensure_ascii=False, indent=2), limit)
 
@@ -125,11 +188,13 @@ class PageContextManager:
         action: dict,
         result: str,
         observation: str,
+        before_snapshot: dict,
         after_snapshot: dict,
     ) -> dict:
         self.context["current_task"] = self.context.get("current_task") or str(user_goal or "")
         self.apply_snapshot(after_snapshot)
         self.context["last_action_effect"] = _compact_text(observation or result, 300)
+        self._append_navigation_step(action, result, observation, before_snapshot, after_snapshot)
         action_name = action.get("action") if isinstance(action, dict) else ""
         if action_name == "done":
             self.context["task_stage"] = "done"
@@ -151,9 +216,10 @@ class PageContextManager:
         after_snapshot: dict,
     ) -> dict:
         self.apply_snapshot(after_snapshot)
+        previous_path = list(self.context.get("navigation_path") or [])
         prompt_template = self.config.get("update_prompt_template") or ""
         if not prompt_template:
-            return self._fallback_update(user_goal, action, result, observation, after_snapshot)
+            return self._fallback_update(user_goal, action, result, observation, before_snapshot, after_snapshot)
 
         prompt = prompt_template.format(
             user_goal=_compact_text(user_goal, 1000),
@@ -180,13 +246,15 @@ class PageContextManager:
             if not parsed:
                 raise ValueError(f"page_context 模型未返回合法 JSON：{_compact_text(raw_text, 300)}")
             self.context = _normalize_context(parsed, self.default_context)
+            self.context["navigation_path"] = previous_path
             self.apply_snapshot(after_snapshot)
+            self._append_navigation_step(action, result, observation, before_snapshot, after_snapshot)
             if not self.context.get("current_task"):
                 self.context["current_task"] = str(user_goal or "")
             return self.context
         except Exception as exc:
             print(f"page_context 更新失败，使用本地兜底：{exc}")
-            return self._fallback_update(user_goal, action, result, observation, after_snapshot)
+            return self._fallback_update(user_goal, action, result, observation, before_snapshot, after_snapshot)
 
     def brief(self) -> str:
         target = self.context.get("target") or {}
@@ -199,5 +267,6 @@ class PageContextManager:
             f"missing={self.context.get('missing', [])} "
             f"target_keys={list(target)[:6]} "
             f"collected_keys={list(collected)[:6]} "
-            f"ui_keys={list(ui_state)[:6]}"
+            f"ui_keys={list(ui_state)[:6]} "
+            f"path_len={len(self.context.get('navigation_path') or [])}"
         )

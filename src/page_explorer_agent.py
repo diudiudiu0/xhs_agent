@@ -647,6 +647,15 @@ class XhsPageExplorer:
         if _is_valid_action(parsed):
             return parsed
 
+        repaired = await self._repair_action(
+            user_goal=user_goal,
+            snapshot=snapshot,
+            history=history,
+            raw_text=raw_text,
+        )
+        if _is_valid_action(repaired):
+            return repaired
+
         return {
             "action": "fail",
             "reason": (
@@ -654,6 +663,49 @@ class XhsPageExplorer:
                 f"原始返回预览：{_compact_text(raw_text, 300)}"
             ),
         }
+
+    async def _repair_action(
+        self,
+        user_goal: str,
+        snapshot: dict,
+        history: list[ExplorationStep],
+        raw_text: str,
+    ) -> dict | None:
+        template = str(get_prompt_config("page_explorer", "action_repair_prompt_template", default="")).strip()
+        if not template:
+            return None
+
+        prompt = render_prompt_template(
+            template,
+            user_goal=user_goal,
+            page_context=self.page_context.render(limit=2600),
+            history_json=json.dumps([asdict(step) for step in history[-6:]], ensure_ascii=False, indent=2),
+            snapshot_json=json.dumps(self._snapshot_brief(snapshot), ensure_ascii=False, indent=2),
+            raw_model_output=_compact_text(raw_text, 3000),
+            tool_catalog=PAGE_TOOL_REGISTRY.render_prompt_catalog(),
+            json_rules=PAGE_TOOL_REGISTRY.render_json_rules(),
+        )
+        try:
+            response = _client().chat.completions.create(
+                model=MODEL_CONFIG.get("formatter_model") or MODEL_CONFIG.get("planner_model"),
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=min(int(MODEL_CONFIG.get("formatter_max_tokens", 1200)), 1600),
+                temperature=MODEL_CONFIG.get("formatter_temperature", 0.1),
+            )
+            repaired_text = _extract_response_text(response)
+            _debug_response("页面探索动作修复模型", response, repaired_text)
+            repaired = _extract_json(repaired_text)
+            if _is_valid_action(repaired):
+                return repaired
+            print(
+                "页面探索动作修复模型未返回合法动作："
+                f"{_compact_text(repaired_text, 300)}",
+                flush=True,
+            )
+            return None
+        except Exception as exc:
+            print(f"页面探索动作修复失败：{exc}", flush=True)
+            return None
 
     def _snapshot_brief(self, snapshot: dict) -> dict:
         return {
