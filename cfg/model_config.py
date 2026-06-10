@@ -11,10 +11,13 @@
 - doubao：使用火山方舟 Seedream 图片生成 API。
 """
 
+import os
+
 
 MODEL_CONFIG = {
     "provider": "deepseek",
-    "api_key": "your_api_key",  # 为空时可自行改造为读取 DEEPSEEK_API_KEY。
+    "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
+    "env_key": "DEEPSEEK_API_KEY",
     "base_url": "https://api.deepseek.com",
     "planner_model": "deepseek-v4-flash",
     "content_model": "deepseek-v4-flash",
@@ -92,7 +95,7 @@ MEMORY_RERANK_MODEL_CONFIG = {
 # an embeddings-compatible endpoint. Keep DeepSeek for MEMORY_RERANK_MODEL_CONFIG.
 EMBEDDING_MODEL_CONFIG = {
     "provider": "openai_compatible",
-    "api_key": "",
+    "api_key": os.getenv("EMBEDDING_API_KEY", ""),
     "env_key": "EMBEDDING_API_KEY",
     "base_url": "",
     "model": "",
@@ -129,7 +132,9 @@ IMAGE_MODEL_CONFIG = {
     # Doubao/火山方舟:
     # - api_key 为空时优先读取 ARK_API_KEY，其次读取 VOLCENGINE_API_KEY。
     # - base_url 通常为 https://ark.cn-beijing.volces.com/api/v3。
-    "api_key": "your_api_key",
+    "api_key": os.getenv("ARK_API_KEY") or os.getenv("VOLCENGINE_API_KEY", ""),
+    "env_key": "ARK_API_KEY",
+    "env_keys": ["ARK_API_KEY", "VOLCENGINE_API_KEY"],
     "base_url": "https://ark.cn-beijing.volces.com/api/v3",
 
     # OpenAI 示例：gpt-image-1
@@ -162,7 +167,7 @@ VISION_PROMPT_MODEL_CONFIG = {
     # - base_url: https://api.moonshot.cn/v1
     # - model: kimi-k2.6
     "provider": "moonshot",
-    "api_key": "your_api_key",
+    "api_key": os.getenv("MOONSHOT_API_KEY", ""),
     "env_key": "MOONSHOT_API_KEY",
     "env_keys": ["MOONSHOT_API_KEY"],
     "base_url": "https://api.moonshot.cn/v1",

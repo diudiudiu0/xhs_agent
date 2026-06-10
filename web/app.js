@@ -14,6 +14,7 @@ const ui = {
   queueSize: document.querySelector("#queueSize"),
   currentTask: document.querySelector("#currentTask"),
   steps: document.querySelector("#steps"),
+  memoryLookups: document.querySelector("#memoryLookups"),
   eventLog: document.querySelector("#eventLog"),
   memoryForm: document.querySelector("#memoryForm"),
   memoryQuery: document.querySelector("#memoryQuery"),
@@ -38,21 +39,28 @@ async function api(path, options = {}) {
   return data;
 }
 
-function setStatus(text, mode = "") {
-  ui.serviceStatus.textContent = text;
+function text(value, fallback = "-") {
+  const normalized = value === null || value === undefined ? "" : String(value).trim();
+  return normalized || fallback;
+}
+
+function setStatus(label, mode = "") {
+  ui.serviceStatus.textContent = label;
   ui.serviceStatus.className = `status-pill ${mode}`.trim();
 }
 
 function appendLog(type, payload = {}) {
   const item = document.createElement("div");
   item.className = "log-item";
+
   const title = document.createElement("strong");
   title.textContent = type;
-  const body = document.createElement("span");
-  const text = payload.message || payload.answer || payload.error || payload.task_id || "";
-  body.textContent = text ? ` ${text}` : "";
   item.appendChild(title);
+
+  const body = document.createElement("span");
+  body.textContent = text(payload.message || payload.answer || payload.error || payload.task_id, "");
   item.appendChild(body);
+
   ui.eventLog.prepend(item);
   while (ui.eventLog.children.length > 80) ui.eventLog.lastChild.remove();
 }
@@ -70,35 +78,148 @@ function renderMessages(messages = []) {
   ui.messages.scrollTop = ui.messages.scrollHeight;
 }
 
+function statusClass(status) {
+  if (status === "completed") return "ok";
+  if (status === "failed") return "error";
+  if (status === "in_progress" || status === "planned") return "active";
+  if (String(status || "").includes("waiting")) return "warn";
+  return "";
+}
+
 function renderSteps(steps = []) {
   ui.steps.innerHTML = "";
   if (!steps.length) {
     const empty = document.createElement("li");
-    empty.textContent = "暂无步骤";
+    empty.className = "empty-row";
+    empty.textContent = "暂无执行步骤";
     ui.steps.appendChild(empty);
     return;
   }
+
   for (const step of steps) {
     const node = document.createElement("li");
-    const heading = document.createElement("div");
-    heading.className = "step-title";
-    heading.textContent = `${step.skill_name || step.decision_type || "step"} · ${step.status || "-"}`;
-    const detail = document.createElement("div");
-    detail.className = "step-meta";
-    detail.textContent = step.reason || step.result?.message || step.result?.error || "";
-    node.appendChild(heading);
-    node.appendChild(detail);
+    node.className = "step-item";
+
+    const header = document.createElement("div");
+    header.className = "step-header";
+    const name = document.createElement("strong");
+    name.textContent = `${step.index || ""}. ${step.skill_name || step.decision_type || "step"}`;
+    const badge = document.createElement("span");
+    badge.className = `mini-badge ${statusClass(step.status)}`;
+    badge.textContent = step.status || "-";
+    header.append(name, badge);
+
+    const meta = document.createElement("div");
+    meta.className = "step-meta";
+    meta.textContent = [
+      step.sub_goal ? `目标：${step.sub_goal}` : "",
+      step.scope ? `范围：${step.scope}` : "",
+      step.reason ? `原因：${step.reason}` : "",
+      step.result?.message ? `结果：${step.result.message}` : "",
+      step.result?.error ? `错误：${step.result.error}` : "",
+    ].filter(Boolean).join("\n");
+
+    node.append(header, meta);
     ui.steps.appendChild(node);
   }
 }
 
+function compactMemoryItem(item) {
+  return {
+    scope: item.memory_scope || "",
+    score: item.match_score ?? "",
+    type: item.memory_type || "",
+    method: item.retrieval_method || "",
+    request: item.user_request || "",
+    summary: item.summary || item.result || "",
+  };
+}
+
+function renderMemoryItems(container, label, items = []) {
+  const group = document.createElement("div");
+  group.className = "memory-group";
+
+  const heading = document.createElement("div");
+  heading.className = "memory-group-heading";
+  heading.textContent = `${label} (${items.length})`;
+  group.appendChild(heading);
+
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "memory-empty";
+    empty.textContent = "无命中";
+    group.appendChild(empty);
+    container.appendChild(group);
+    return;
+  }
+
+  for (const raw of items.slice(0, 5)) {
+    const item = compactMemoryItem(raw);
+    const node = document.createElement("article");
+    node.className = "memory-hit";
+
+    const top = document.createElement("div");
+    top.className = "memory-hit-top";
+    const request = document.createElement("strong");
+    request.textContent = item.request || "未命名记忆";
+    const score = document.createElement("span");
+    score.className = "score";
+    score.textContent = item.score === "" ? item.type : `${item.type} · ${item.score}`;
+    top.append(request, score);
+
+    const detail = document.createElement("p");
+    detail.textContent = item.summary || "无摘要";
+
+    const meta = document.createElement("small");
+    meta.textContent = [item.method, raw.reuse_level, raw.site].filter(Boolean).join(" / ");
+
+    node.append(top, detail, meta);
+    group.appendChild(node);
+  }
+  container.appendChild(group);
+}
+
+function renderMemoryLookups(lookups = []) {
+  ui.memoryLookups.innerHTML = "";
+  if (!lookups.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-row";
+    empty.textContent = "暂无 step 记忆检索记录";
+    ui.memoryLookups.appendChild(empty);
+    return;
+  }
+
+  for (const lookup of lookups.slice().reverse()) {
+    const node = document.createElement("section");
+    node.className = "lookup-card";
+
+    const header = document.createElement("div");
+    header.className = "lookup-header";
+    const title = document.createElement("strong");
+    title.textContent = `规划轮次 ${lookup.planning_round}`;
+    const context = document.createElement("span");
+    context.textContent = lookup.last_skill_name
+      ? `上一步：${lookup.last_skill_name} (${lookup.last_success})`
+      : "任务开始";
+    header.append(title, context);
+    node.appendChild(header);
+
+    renderMemoryItems(node, "goal", lookup.goal || []);
+    renderMemoryItems(node, "current_step", lookup.current_step || []);
+    ui.memoryLookups.appendChild(node);
+  }
+}
+
 function renderState(state = {}) {
-  ui.agentStatus.textContent = state.status || "-";
-  ui.currentGoal.textContent = state.current_goal || "-";
-  ui.finalAnswer.textContent = state.final_answer || "-";
+  const status = state.status || "-";
+  ui.agentStatus.textContent = status;
+  ui.agentStatus.className = `state-badge ${statusClass(status)}`;
+  ui.currentGoal.textContent = text(state.current_goal);
+  ui.finalAnswer.textContent = text(state.final_answer);
   ui.queueSize.textContent = String(state.queue_size ?? 0);
-  ui.currentTask.textContent = state.current_task?.message || "-";
+  ui.currentTask.textContent = text(state.current_task?.message);
   renderSteps(state.steps || []);
+  renderMemoryLookups(state.memory_lookups || []);
   renderMessages(state.messages || []);
 
   const waiting = state.status === "waiting_user_confirmation";

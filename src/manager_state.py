@@ -34,6 +34,7 @@ class ManagerState:
     current_goal: str = ""
     status: str = "idle"
     steps: list[ManagerStep] = field(default_factory=list)
+    memory_lookups: list[dict[str, Any]] = field(default_factory=list)
     session_memory: dict[str, Any] = field(default_factory=dict)
     last_skill_result: dict[str, Any] = field(default_factory=dict)
     pending_confirmation: dict[str, Any] | None = None
@@ -45,6 +46,7 @@ class ManagerState:
         self.current_goal = user_message
         self.status = "planning"
         self.steps = []
+        self.memory_lookups = []
         self.last_skill_result = {}
         self.pending_confirmation = None
         self.final_answer = ""
@@ -87,6 +89,46 @@ class ManagerState:
         self.last_skill_result = result
         self.updated_at = _now()
 
+    def record_memory_lookup(
+        self,
+        planning_round: int,
+        memory_hints: list[dict[str, Any]],
+        last_observation: dict[str, Any] | None = None,
+    ):
+        grouped: dict[str, list[dict[str, Any]]] = {"goal": [], "current_step": []}
+        for item in memory_hints or []:
+            if not isinstance(item, dict):
+                continue
+            scope = str(item.get("memory_scope") or "unknown")
+            grouped.setdefault(scope, [])
+            grouped[scope].append(
+                {
+                    "memory_id": item.get("memory_id", ""),
+                    "memory_type": item.get("memory_type", ""),
+                    "retrieval_method": item.get("retrieval_method", ""),
+                    "match_score": item.get("match_score"),
+                    "reuse_level": item.get("reuse_level", ""),
+                    "site": item.get("site", ""),
+                    "task_type": item.get("task_type", ""),
+                    "user_request": item.get("user_request", ""),
+                    "summary": str(item.get("summary") or "")[:420],
+                    "result": str(item.get("result") or "")[:300],
+                }
+            )
+        observation = last_observation or {}
+        self.memory_lookups.append(
+            {
+                "planning_round": planning_round,
+                "created_at": _now(),
+                "last_skill_name": observation.get("skill_name", ""),
+                "last_success": observation.get("success"),
+                "goal": grouped.get("goal", []),
+                "current_step": grouped.get("current_step", []),
+            }
+        )
+        self.memory_lookups = self.memory_lookups[-30:]
+        self.updated_at = _now()
+
     def apply_memory_updates(self, updates: dict[str, Any] | None):
         if not updates:
             return
@@ -118,6 +160,7 @@ class ManagerState:
             "current_goal": self.current_goal,
             "status": self.status,
             "steps": [step.to_dict() for step in steps],
+            "memory_lookups": self.memory_lookups[-30:],
             "session_memory": self.session_memory,
             "last_skill_result": self.last_skill_result,
             "pending_confirmation": self.pending_confirmation,

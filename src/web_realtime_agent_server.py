@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import queue
+import sys
 import threading
 import time
 import uuid
@@ -16,13 +17,16 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from skills.catalog import DEFAULT_SKILL_REGISTRY
 from src.manager_agent import ManagerAgent
 from src.memory_embedding import MemoryEmbeddingIndex, embedding_provider_status, vector_index_status
 from src.memory_retriever import MemoryRetriever, build_memory_chunks, load_memory_config
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WEB_ROOT = PROJECT_ROOT / "web"
 
 

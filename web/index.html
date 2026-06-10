@@ -3,82 +3,94 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>XHS Agent 控制台</title>
+    <title>XHS Agent 工作台</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <main class="app-shell">
-      <section class="chat-panel">
-        <header class="topbar">
-          <div>
-            <h1>XHS Agent</h1>
-            <p>小红书账号管理实时工作台</p>
-          </div>
-          <div id="serviceStatus" class="status-pill">连接中</div>
-        </header>
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Xiaohongshu Account Manager</p>
+          <h1>XHS Agent 工作台</h1>
+        </div>
+        <div class="header-actions">
+          <span id="serviceStatus" class="status-pill">连接中</span>
+          <button id="refreshState" type="button">刷新状态</button>
+        </div>
+      </header>
 
+      <section class="chat-panel panel">
+        <div class="panel-title">
+          <h2>对话</h2>
+          <span class="muted">Ctrl + Enter 发送</span>
+        </div>
         <section id="messages" class="messages" aria-live="polite"></section>
-
         <form id="chatForm" class="composer">
           <textarea
             id="messageInput"
-            rows="3"
-            placeholder="例如：查看我的草稿箱详情；根据喜仔的评论回复他；生成三张脚轮商品图并创建草稿"
+            rows="4"
+            placeholder="例如：刷新我的已发布笔记数据并分析下一篇脚轮内容怎么写"
           ></textarea>
           <div class="composer-actions">
             <button id="sendButton" type="submit">发送</button>
             <button id="stopButton" type="button">停止当前任务</button>
-            <button id="confirmButton" type="button" data-message="y">确认</button>
-            <button id="cancelButton" type="button" data-message="n">取消</button>
-            <span class="hint">Ctrl + Enter 发送</span>
+            <button id="confirmButton" type="button" data-message="y" hidden>确认</button>
+            <button id="cancelButton" type="button" data-message="n" hidden>取消</button>
           </div>
         </form>
       </section>
 
-      <aside class="side-panel">
-        <section class="panel-block">
-          <div class="block-header">
-            <h2>任务状态</h2>
-            <button id="refreshState" type="button">刷新</button>
+      <section class="work-panel panel">
+        <div class="panel-title">
+          <h2>执行过程</h2>
+          <span id="agentStatus" class="state-badge">-</span>
+        </div>
+        <dl class="state-grid">
+          <div>
+            <dt>当前目标</dt>
+            <dd id="currentGoal">-</dd>
           </div>
-          <dl class="state-grid">
-            <div>
-              <dt>状态</dt>
-              <dd id="agentStatus">-</dd>
-            </div>
-            <div>
-              <dt>当前目标</dt>
-              <dd id="currentGoal">-</dd>
-            </div>
-            <div>
-              <dt>当前任务</dt>
-              <dd id="currentTask">-</dd>
-            </div>
-            <div>
-              <dt>队列</dt>
-              <dd id="queueSize">0</dd>
-            </div>
-            <div>
-              <dt>最终回复</dt>
-              <dd id="finalAnswer">-</dd>
-            </div>
-          </dl>
-        </section>
+          <div>
+            <dt>运行任务</dt>
+            <dd id="currentTask">-</dd>
+          </div>
+          <div>
+            <dt>队列</dt>
+            <dd id="queueSize">0</dd>
+          </div>
+          <div>
+            <dt>最终答复</dt>
+            <dd id="finalAnswer">-</dd>
+          </div>
+        </dl>
 
-        <section class="panel-block">
-          <h2>执行步骤</h2>
-          <ol id="steps" class="steps"></ol>
-        </section>
+        <div class="section-heading">
+          <h3>规划与 Skill 调用</h3>
+        </div>
+        <ol id="steps" class="steps"></ol>
 
-        <section class="panel-block">
-          <h2>实时事件</h2>
+        <div class="section-heading">
+          <h3>每步记忆检索</h3>
+          <span class="muted">goal 为总目标记忆，current_step 为当前步骤记忆</span>
+        </div>
+        <div id="memoryLookups" class="memory-lookups"></div>
+      </section>
+
+      <aside class="tools-panel">
+        <section class="panel">
+          <div class="panel-title">
+            <h2>实时事件</h2>
+            <span class="muted">最近 80 条</span>
+          </div>
           <div id="eventLog" class="event-log"></div>
         </section>
 
-        <section class="panel-block">
-          <h2>长期记忆检索</h2>
+        <section class="panel">
+          <div class="panel-title">
+            <h2>手动记忆检索</h2>
+          </div>
           <form id="memoryForm" class="tool-form">
-            <input id="memoryQuery" type="text" placeholder="输入检索内容" />
+            <input id="memoryQuery" type="text" placeholder="输入要检索的任务或页面操作" />
             <div class="field-row">
               <select id="retrievalMethod">
                 <option value="bm25_embedding">BM25 + Embedding</option>
@@ -97,8 +109,10 @@
           <pre id="memoryResult" class="result-box"></pre>
         </section>
 
-        <section class="panel-block">
-          <h2>向量库</h2>
+        <section class="panel">
+          <div class="panel-title">
+            <h2>向量库</h2>
+          </div>
           <div class="field-row">
             <button id="buildVector" type="button">增量构建</button>
             <button id="rebuildVector" type="button">强制重建</button>

@@ -48,9 +48,10 @@ class AgentWorkflowRuntime:
         goal_memory_hints = list(memory_hints or [])
         planner_memory_hints = self._scope_memory_hints(goal_memory_hints, "goal")
 
-        for _ in range(self.max_steps):
+        for planning_round in range(1, self.max_steps + 1):
             if decision is None:
                 planner_memory_hints = self._build_planner_memory(goal, goal_memory_hints, last_observation)
+                self.state.record_memory_lookup(planning_round, planner_memory_hints, last_observation)
                 decision = self._plan(goal, planner_memory_hints, last_observation)
 
             decision_type = decision.get("type")
