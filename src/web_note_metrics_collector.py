@@ -179,6 +179,50 @@ def _extract_metric_from_candidates(candidates: list[dict[str, Any]], keywords: 
     return None
 
 
+def _append_note_metrics_history(notes: list[dict[str, Any]], config: dict[str, Any], collected_at: str | None = None):
+    history_file = config.get("history_file")
+    if not history_file:
+        return
+    path = _resolve_project_path(history_file, "data/account_insights/note_metrics_history.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            data = {"version": 1, "snapshots": []}
+    else:
+        data = {"version": 1, "snapshots": []}
+    snapshots = data.get("snapshots")
+    if not isinstance(snapshots, list):
+        snapshots = []
+        data["snapshots"] = snapshots
+
+    collected_at = collected_at or _now_iso()
+    for note in notes:
+        snapshots.append(
+            {
+                "collected_at": collected_at,
+                "title": note.get("title", ""),
+                "published_at": note.get("published_at", ""),
+                "view_count": note.get("view_count"),
+                "like_count": note.get("like_count"),
+                "collect_count": note.get("collect_count"),
+                "comment_count": note.get("comment_count"),
+                "share_count": note.get("share_count"),
+                "source_url": note.get("source_url", ""),
+            }
+        )
+    data["updated_at"] = collected_at
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _should_append_metrics_history(output_file: str | Path | None, path: Path, config: dict[str, Any]) -> bool:
+    default_path = _resolve_project_path(config.get("output_file"), "data/xhs_published_note_metrics.json")
+    if output_file is not None and path.resolve() != default_path.resolve():
+        return False
+    return bool(config.get("history_file"))
+
+
 def _parse_comment_item(item: Any) -> dict[str, str] | None:
     if isinstance(item, dict):
         raw_text = item.get("raw") or item.get("text") or ""
@@ -674,6 +718,7 @@ async def extract_note_metrics_from_detail_page(page, config: dict[str, Any] | N
         "published_at": published_at,
         "comment_count": comment_count if comment_count is not None else len(comments),
         "comments": comments,
+        "view_count": _extract_metric_from_candidates(interaction_candidates, metric_keywords.get("view") or []),
         "collect_count": _extract_metric_from_candidates(interaction_candidates, metric_keywords.get("collect") or []),
         "like_count": _extract_metric_from_candidates(interaction_candidates, metric_keywords.get("like") or []),
         "share_count": _extract_metric_from_candidates(interaction_candidates, metric_keywords.get("share") or []),
@@ -725,6 +770,8 @@ def save_note_metrics_if_new(note: dict[str, Any], output_file: str | Path | Non
         data["notes"].append(note)
         data["updated_at"] = _now_iso()
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        if _should_append_metrics_history(output_file, path, config):
+            _append_note_metrics_history([note], config, collected_at=data["updated_at"])
         added = True
 
     return {
@@ -761,6 +808,8 @@ def save_note_metrics_snapshot(notes: list[dict[str, Any]], output_file: str | P
         "notes": deduped_notes,
     }
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    if _should_append_metrics_history(output_file, path, config):
+        _append_note_metrics_history(deduped_notes, config, collected_at=data["updated_at"])
     return {
         "output_file": str(path),
         "added": True,

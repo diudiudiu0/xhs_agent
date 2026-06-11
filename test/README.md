@@ -22,7 +22,7 @@
   Verifies JSON deduplication, publish-date normalization, and comment cleanup for collected note metrics.
 
 - `unit/test_account_management_service.py`
-  Verifies local account analysis, content topic planning, content calendar scheduling, and risky-action review.
+  Verifies local account analysis, creative strategy generation, content topic planning, content calendar scheduling, and risky-action review.
 
 - `unit/test_account_management_skills.py`
   Verifies account-management skills can be called through `SkillRegistry` and return unified `SkillResult` objects.
@@ -70,6 +70,9 @@
 
 - `integration/test_collect_all_published_note_metrics.py`
   Opens the Xiaohongshu main site, loops through visible published notes, collects metrics/comments/content, and overwrites `data/xhs_published_note_metrics.json` as a fresh account snapshot.
+
+- `integration/test_collect_account_overview.py`
+  Opens the Xiaohongshu creator center, enters data overview/dashboard when visible, collects account-level metric cards and page summary, and writes `data/account_insights/account_overview.json`.
 
 - `integration/test_create_draft.py`
   Opens the creator center and runs the note draft workflow.

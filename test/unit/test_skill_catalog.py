@@ -20,7 +20,9 @@ def main():
         "create_note_draft",
         "collect_note_metrics",
         "collect_latest_published_note_metrics",
+        "collect_account_overview",
         "analyze_account_performance",
+        "generate_creative_strategy",
         "plan_content_topics",
         "reply_comments",
         "schedule_content_calendar",
@@ -78,7 +80,9 @@ def main():
 
     for name in (
         "collect_note_metrics",
+        "collect_account_overview",
         "analyze_account_performance",
+        "generate_creative_strategy",
         "plan_content_topics",
         "reply_comments",
         "schedule_content_calendar",
@@ -89,6 +93,10 @@ def main():
 
     if specs["reply_comments"].get("executor_agent") != "page_explorer":
         raise AssertionError("reply_comments should delegate to page_explorer")
+    if specs["collect_account_overview"].get("executor_agent") != "account_overview_collector":
+        raise AssertionError("collect_account_overview should use account_overview_collector")
+    if specs["generate_creative_strategy"].get("executor_agent") != "account_strategy_agent":
+        raise AssertionError("generate_creative_strategy should use account_strategy_agent")
     if specs["review_risky_action"].get("executor_agent") != "account_management_service":
         raise AssertionError("review_risky_action should use account_management_service")
 
@@ -100,6 +108,8 @@ def main():
         "web_note_metrics_collector",
         "account_management_service",
         "collect_note_metrics",
+        "collect_account_overview",
+        "generate_creative_strategy",
         "review_risky_action",
         "search_long_term_memory",
         "create_generated_note_draft",

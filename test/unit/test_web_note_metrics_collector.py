@@ -36,6 +36,7 @@ def main():
         "title": "test note title",
         "content": "test note body",
         "published_at": "2026-06-05",
+        "view_count": 10,
         "comment_count": 1,
         "comments": [{"author": "test_user", "content": "test comment"}],
         "collect_count": 2,

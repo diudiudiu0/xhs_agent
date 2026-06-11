@@ -370,8 +370,50 @@ skills:
       observation_count: 本次刷新笔记数量：{count}
       observation_note: "{index}. {title}（{published_at}）点赞={like_count} 收藏={collect_count} 评论={comment_count}"
 
+  collect_account_overview:
+    description: 打开或复用小红书创作中心，进入数据看板/笔记数据总览，采集账号级指标卡片、浏览/互动/粉丝等总览数据和页面摘要，并保存到 data/account_insights/account_overview.json，同时写入历史快照。
+    executor_type: workflow
+    executor_agent: account_overview_collector
+    autonomy_level: medium
+    manager_role: manager 在用户要求查看账号总览、笔记数据总览、浏览量趋势、账号数据看板，或准备基于数据做创作分析时调用。该 skill 只负责采集和保存总览数据，不负责写文案。
+    input_schema:
+      output_file: 可选。账号总览保存路径。
+    output_schema:
+      overview: 账号数据总览，包含 metrics、metric_cards、visible_text_sample。
+      storage: JSON 写入结果，包含 output_file 和 history_file。
+    preconditions:
+      - 需要先运行 test/integration/browser_session_control.py --target creator --mode login 完成创作中心登录。
+    memory_reads:
+      - browser_session
+      - account_data_config
+    memory_writes:
+      - last_account_overview
+      - last_account_overview_file
+    risk_policy:
+      requires_confirmation_for: []
+    risk_level: low
+    side_effects:
+      - opens_browser_if_needed
+      - reads_creator_dashboard
+      - writes_local_json
+    tags:
+      - account_data
+      - overview
+      - dashboard
+      - metrics
+      - creator_site
+      - workflow
+    examples:
+      - 采集我的账号数据总览
+      - 查看创作中心笔记数据总览并保存
+      - 获取账号浏览量、互动和粉丝数据
+    messages:
+      success: 已采集账号数据总览 -> {output_file}
+      observation_metric: "{name}={value}"
+      observation_empty: 未识别到明确指标卡片，已保存页面摘要供后续分析。
+
   analyze_account_performance:
-    description: 读取 data/xhs_published_note_metrics.json，对账号已采集笔记进行表现分析，包括总指标、平均指标、高互动笔记、关键词、评论样本和运营洞察。
+    description: 读取 data/xhs_published_note_metrics.json，对账号已采集笔记进行表现分析，包括浏览量、点赞、收藏、评论、分享、互动率、高互动笔记、关键词、评论样本和运营洞察。
     executor_type: tool
     executor_agent: account_management_service
     autonomy_level: low
@@ -407,7 +449,59 @@ skills:
       - 根据采集数据看看哪篇笔记最好
     messages:
       success: 已完成账号表现分析，共分析 {note_count} 篇笔记。
-      observation_totals: 总点赞={like_count} 总收藏={collect_count} 总评论={comment_count} 总分享={share_count}
+      observation_totals: 总浏览={view_count} 总点赞={like_count} 总收藏={collect_count} 总评论={comment_count} 总分享={share_count}
+
+  generate_creative_strategy:
+    description: 综合已采集的已发布笔记指标、账号数据总览和用户目标，生成下一轮小红书创作策略，包括机会判断、应避免内容、下一批选题、图片计划、文案 brief 和建议下一步 skill。
+    executor_type: agent
+    executor_agent: account_strategy_agent
+    autonomy_level: medium
+    manager_role: |
+      manager 在完成 collect_note_metrics / collect_account_overview / analyze_account_performance 后调用本 skill，把数据转为可执行创作方案。
+      如果用户直接要求“根据账号数据创作/规划下一篇”，manager 应优先确保数据已采集；若已有本地数据，也可以直接调用本 skill。
+      本 skill 不直接发布或创建草稿，只输出策略；后续可继续调用 generate_image_prompts、generate_images、plan_note_text 或 create_generated_note_draft。
+    input_schema:
+      metrics_file: 可选。笔记指标 JSON 文件路径。
+      overview_file: 可选。账号总览 JSON 文件路径。
+      user_goal: 可选。用户对创作方向的补充要求。
+      topic_count: 可选。生成选题数量。
+      output_file: 可选。策略保存路径。
+      use_llm: 可选。是否使用大模型生成创作策略；false 时使用本地 fallback。
+    output_schema:
+      summary: 账号当前内容表现判断。
+      data_gaps: 当前缺少的数据。
+      next_topics: 下一批选题和图片计划。
+      recommended_next_action: 建议 manager 下一步调用的 skill。
+      output_file: 保存文件。
+    preconditions:
+      - 最好已有 collect_note_metrics 和 collect_account_overview 的结果；没有时会基于本地已有 JSON 或冷启动 fallback。
+    memory_reads:
+      - note_metrics_data
+      - account_overview_data
+      - last_account_analysis
+    memory_writes:
+      - last_creative_strategy
+      - planned_content_topics
+    risk_policy:
+      requires_confirmation_for: []
+    risk_level: low
+    side_effects:
+      - may_call_llm_api
+      - reads_local_json
+      - writes_local_json
+      - updates_session_memory
+    tags:
+      - account_data
+      - creative
+      - strategy
+      - content_strategy
+      - planning
+    examples:
+      - 根据账号数据给我下一篇脚轮推荐的创作策略
+      - 分析浏览点赞收藏评论后，规划 5 个新选题
+      - 用数据总览和历史笔记表现制定下周内容方向
+    messages:
+      success: 已生成 {count} 个创作策略选题：{output_file}
 
   plan_content_topics:
     description: 基于账号表现分析、评论样本和账号方向，生成下一批小红书内容选题，并保存到 data/content_topics.json。

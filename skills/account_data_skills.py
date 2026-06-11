@@ -6,10 +6,12 @@ from skills.base import BaseSkill, SkillContext, SkillResult
 from skills.config import build_skill_spec, skill_message
 from src.account_management_service import (
     analyze_account_performance,
+    generate_creative_strategy,
     plan_content_topics,
     review_risky_action,
     schedule_content_calendar,
 )
+from src.account_overview_collector import collect_account_overview
 from src.web_note_metrics_collector import collect_all_published_note_metrics, collect_latest_published_note_metrics
 
 
@@ -115,6 +117,37 @@ class CollectNoteMetricsSkill(BaseSkill):
         return await _collect_all_metrics(self.name, context, args or {})
 
 
+class CollectAccountOverviewSkill(BaseSkill):
+    spec = build_skill_spec("collect_account_overview")
+
+    async def run(self, context: SkillContext, args: dict[str, Any] | None = None) -> SkillResult:
+        args = args or {}
+        skills = context.require_xhs_skills()
+        page = await skills.open_page("creator")
+        result = await collect_account_overview(
+            page,
+            output_file=args.get("output_file"),
+        )
+        overview = result.get("overview") or {}
+        storage = result.get("storage") or {}
+        metrics = overview.get("metrics") or {}
+        return SkillResult.ok(
+            self.name,
+            message=skill_message(self.name, "success", output_file=storage.get("output_file", "")),
+            data=result,
+            artifacts=[storage.get("output_file")] if storage.get("output_file") else [],
+            observations=[
+                skill_message(self.name, "observation_metric", name=name, value=value)
+                for name, value in list(metrics.items())[:8]
+            ]
+            or [skill_message(self.name, "observation_empty")],
+            memory_updates={
+                "last_account_overview": overview,
+                "last_account_overview_file": storage.get("output_file", ""),
+            },
+        )
+
+
 class AnalyzeAccountPerformanceSkill(BaseSkill):
     spec = build_skill_spec("analyze_account_performance")
 
@@ -133,6 +166,7 @@ class AnalyzeAccountPerformanceSkill(BaseSkill):
                 skill_message(
                     self.name,
                     "observation_totals",
+                    view_count=totals.get("view_count", 0),
                     like_count=totals.get("like_count", 0),
                     collect_count=totals.get("collect_count", 0),
                     comment_count=totals.get("comment_count", 0),
@@ -141,6 +175,40 @@ class AnalyzeAccountPerformanceSkill(BaseSkill):
                 *[str(item) for item in analysis.get("insights", [])[:3]],
             ],
             memory_updates={"last_account_analysis": analysis},
+        )
+
+
+class GenerateCreativeStrategySkill(BaseSkill):
+    spec = build_skill_spec("generate_creative_strategy")
+
+    async def run(self, context: SkillContext, args: dict[str, Any] | None = None) -> SkillResult:
+        args = args or {}
+        strategy = generate_creative_strategy(
+            metrics_file=args.get("metrics_file"),
+            overview_file=args.get("overview_file"),
+            user_goal=args.get("user_goal"),
+            topic_count=args.get("topic_count") or args.get("count"),
+            output_file=args.get("output_file"),
+            use_llm=args.get("use_llm"),
+        )
+        topics = strategy.get("next_topics") or []
+        return SkillResult.ok(
+            self.name,
+            message=skill_message(self.name, "success", count=len(topics), output_file=strategy.get("output_file", "")),
+            data=strategy,
+            artifacts=[strategy.get("output_file")] if strategy.get("output_file") else [],
+            observations=[
+                strategy.get("summary", ""),
+                *[
+                    f"{index + 1}. {item.get('title', '')} - {item.get('angle', '')}"
+                    for index, item in enumerate(topics[:5])
+                ],
+            ],
+            memory_updates={
+                "last_creative_strategy": strategy,
+                "last_creative_strategy_file": strategy.get("output_file", ""),
+                "planned_content_topics": topics,
+            },
         )
 
 
@@ -274,7 +342,9 @@ class ReviewRiskyActionSkill(BaseSkill):
 ACCOUNT_DATA_SKILLS = [
     CollectNoteMetricsSkill(),
     CollectLatestPublishedNoteMetricsSkill(),
+    CollectAccountOverviewSkill(),
     AnalyzeAccountPerformanceSkill(),
+    GenerateCreativeStrategySkill(),
     PlanContentTopicsSkill(),
     ScheduleContentCalendarSkill(),
     ReplyCommentsSkill(),

@@ -21,10 +21,13 @@
 - `revise_image_prompts`
 - `generate_images`
 - `plan_note_text`
+- `create_generated_note_draft`
 - `create_note_draft`
 - `collect_note_metrics`
 - `collect_latest_published_note_metrics`
+- `collect_account_overview`
 - `analyze_account_performance`
+- `generate_creative_strategy`
 - `plan_content_topics`
 - `reply_comments`
 - `schedule_content_calendar`

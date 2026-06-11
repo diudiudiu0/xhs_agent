@@ -6,8 +6,10 @@
 account_manager:
   metrics:
     default_metrics_file: data/xhs_published_note_metrics.json
+    default_overview_file: data/account_insights/account_overview.json
     top_note_count: 5
     weights:
+      view: 0
       like: 1
       collect: 2
       comment: 3
@@ -28,6 +30,53 @@ account_manager:
         angle: "结合评论区问题，做更贴近日常使用的推荐。"
       - title: "{keyword}低成本升级方案"
         angle: "突出小配件提升推车、货架和工作台体验。"
+
+  creative_strategy:
+    output_file: data/account_insights/creative_strategy.json
+    use_llm: true
+    default_topic_count: 5
+    prompt_template: |
+      你是一个小红书商品推荐账号的内容策略大脑，负责根据账号数据给出下一轮创作方案。
+
+      账号定位：
+      {account_focus}
+
+      账号/数据看板总览：
+      {overview_json}
+
+      已发布笔记表现分析：
+      {analysis_json}
+
+      用户补充目标：
+      {user_goal}
+
+      输出要求：
+      - 只输出一个严格 JSON 对象，不要 Markdown，不要解释。
+      - 不要编造具体销量、转化率或平台未采集到的数据。
+      - 每个选题都要说明为什么适合当前账号。
+      - 创作建议要能直接用于后续 generate_image_prompts、generate_images、plan_note_text 和 create_note_draft。
+      - 如果历史数据较少，要明确说明是冷启动策略。
+
+      JSON 结构：
+      {{
+        "summary": "账号当前内容表现的一句话判断",
+        "data_gaps": ["当前缺少的数据"],
+        "audience_hypothesis": "当前更可能吸引的人群",
+        "content_opportunities": ["可继续放大的内容机会"],
+        "avoid_patterns": ["暂时应该避免的内容模式"],
+        "next_topics": [
+          {{
+            "title": "选题标题",
+            "reason": "为什么推荐",
+            "angle": "内容角度",
+            "target_audience": "目标人群",
+            "image_plan": ["封面图", "参数图", "场景图"],
+            "copywriting_brief": "正文写作要求",
+            "success_metric": "发布后重点观察的数据"
+          }}
+        ],
+        "recommended_next_action": "建议 manager 下一步调用哪个 skill"
+      }}
 
   calendar:
     output_file: data/content_calendar.json

@@ -25,6 +25,7 @@ async def main():
                     {
                         "title": "caster parameter post",
                         "published_at": "2026-06-05",
+                        "view_count": 80,
                         "like_count": 1,
                         "collect_count": 3,
                         "comment_count": 1,
@@ -47,6 +48,19 @@ async def main():
     )
     if not analysis_result.success or analysis_result.data.get("note_count") != 1:
         raise AssertionError(analysis_result)
+
+    strategy_result = await DEFAULT_SKILL_REGISTRY.run(
+        "generate_creative_strategy",
+        args={
+            "metrics_file": str(metrics_file),
+            "topic_count": 2,
+            "use_llm": False,
+            "output_file": "data/test_account_management_skills_strategy.json",
+        },
+        context=context,
+    )
+    if not strategy_result.success or len(strategy_result.data.get("next_topics", [])) != 2:
+        raise AssertionError(strategy_result)
 
     topic_result = await DEFAULT_SKILL_REGISTRY.run(
         "plan_content_topics",
@@ -82,6 +96,7 @@ async def main():
 
     for path in [
         metrics_file,
+        Path("data/test_account_management_skills_strategy.json"),
         Path("data/test_account_management_skills_topics.json"),
         Path("data/test_account_management_skills_calendar.json"),
     ]:

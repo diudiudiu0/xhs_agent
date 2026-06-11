@@ -5,6 +5,7 @@
 
 published_note_metrics:
   output_file: data/xhs_published_note_metrics.json
+  history_file: data/account_insights/note_metrics_history.json
   default_note_index: 0
   max_notes_per_refresh: 30
   navigation:
@@ -69,6 +70,7 @@ published_note_metrics:
       - '([0-9]+(?:\.[0-9]+)?\s*[万wWkK]?)\s*条评论'
       - '评论\s*([0-9]+(?:\.[0-9]+)?\s*[万wWkK]?)'
     metric_keywords:
+      view: ["浏览", "观看", "阅读", "播放", "曝光", "view", "views"]
       like: ["点赞", "赞", "喜欢", "like"]
       collect: ["收藏", "collect", "favorite"]
       share: ["分享", "转发", "share"]
@@ -81,3 +83,24 @@ published_note_metrics:
       - "说点什么"
       - "登录"
       - "相关推荐"
+
+account_overview:
+  output_file: data/account_insights/account_overview.json
+  history_file: data/account_insights/account_overview_history.json
+  navigation:
+    dashboard_entry_texts: ["数据看板", "数据中心", "数据总览"]
+    note_overview_texts: ["笔记数据", "笔记数据总览", "内容数据", "作品数据"]
+    wait_after_navigation_ms: 2500
+    settle_after_ready_ms: 1000
+  extraction:
+    max_metric_cards: 120
+    max_visible_text_chars: 12000
+    metric_aliases:
+      views: ["浏览量", "浏览", "观看", "阅读", "播放", "曝光"]
+      likes: ["点赞", "赞"]
+      collects: ["收藏"]
+      comments: ["评论", "回复"]
+      shares: ["分享", "转发"]
+      followers: ["粉丝", "粉丝数"]
+      profile_visits: ["主页访问", "主页访客", "访问"]
+      engagement: ["互动", "互动量"]
